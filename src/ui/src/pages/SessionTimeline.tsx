@@ -151,7 +151,7 @@ function parseErrorMsg(raw: string | null): string | null {
 
 function pct(ms: number, total: number): string {
   if (total === 0) return '0%';
-  return `${Math.max(0, (ms / total) * 100).toFixed(4)}%`;
+  return `${Math.min(100, Math.max(0, (ms / total) * 100)).toFixed(4)}%`;
 }
 function wPct(ms: number, total: number): string {
   if (total === 0) return '0%';
@@ -159,20 +159,34 @@ function wPct(ms: number, total: number): string {
 }
 
 /* ── sub-components ── */
-function TimeAxis({ duration, labelW }: { duration: number; labelW: number }) {
-  const TICKS = 8;
-  const ticks = Array.from({ length: TICKS + 1 }, (_, i) => Math.round((i / TICKS) * duration));
+const GANTT_LABEL_WIDTH = 'clamp(56px, 22%, 120px)';
+const GANTT_DURATION_WIDTH = 44;
+function TimeAxis({ duration }: { duration: number }) {
+  const axisRef = useRef<HTMLDivElement>(null);
+  const [tickCount, setTickCount] = useState(8);
+  useEffect(() => {
+    const axis = axisRef.current;
+    if (!axis) return;
+    const resize = () => setTickCount(Math.min(8, Math.floor(axis.clientWidth / 65)));
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(axis);
+    return () => observer.disconnect();
+  }, []);
+  const ticks = tickCount > 0
+    ? Array.from({ length: tickCount + 1 }, (_, i) => Math.round((i / tickCount) * duration))
+    : [duration];
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', height: 22, marginBottom: 4 }}>
-      <div style={{ width: labelW, flexShrink: 0 }} />
-      <div style={{ flex: 1, position: 'relative' }}>
-        {ticks.map(t => (
+    <div style={{ paddingLeft: 11, display: 'flex', alignItems: 'flex-end', height: 22, marginBottom: 4 }}>
+      <div style={{ width: GANTT_LABEL_WIDTH, flexShrink: 0 }} />
+      <div ref={axisRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+        {ticks.map((t, i) => (
           <span
-            key={t}
+            key={i}
             style={{
               position: 'absolute',
               left: pct(t, duration),
-              transform: 'translateX(-50%)',
+              transform: i === ticks.length - 1 ? 'translateX(-100%)' : i === 0 ? undefined : 'translateX(-50%)',
               fontSize: 10,
               color: 'var(--muted)',
               fontVariantNumeric: 'tabular-nums',
@@ -187,17 +201,19 @@ function TimeAxis({ duration, labelW }: { duration: number; labelW: number }) {
           position: 'absolute', bottom: 0, left: 0, right: 0,
           height: 1, background: 'var(--border)',
         }} />
-        {ticks.map(t => (
-          <div key={`tick-${t}`} style={{
+        {ticks.map((t, i) => (
+          <div key={`tick-${i}`} style={{
             position: 'absolute',
             left: pct(t, duration),
             bottom: 0,
             width: 1,
+            transform: i === ticks.length - 1 ? 'translateX(-100%)' : undefined,
             height: 5,
             background: 'var(--border)',
           }} />
         ))}
       </div>
+      <div style={{ width: GANTT_DURATION_WIDTH, flexShrink: 0 }} />
     </div>
   );
 }
@@ -240,7 +256,6 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
   const LANE_H = 16;
   const BAR_H = LANE_H;
   const ROW_H = Math.max(40, 20 + maxLanes * (LANE_H + 2));
-  const LABEL_W = 120;
 
   return (
     <div ref={rowRef} style={{ marginBottom: 2 }}>
@@ -269,7 +284,7 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
       >
         {/* label */}
         <div style={{
-          width: LABEL_W, flexShrink: 0,
+          width: GANTT_LABEL_WIDTH, flexShrink: 0, minWidth: 0,
           paddingLeft: 4, paddingRight: 8,
           display: 'flex', flexDirection: 'column', gap: 1,
         }}>
@@ -277,18 +292,19 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
             S{turn.seq}
             <StopPill reason={turn.stop_reason} />
           </span>
-          <span style={{ fontSize: 9, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ fontSize: 9, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' }}>
             {fmtTokens(turn.input_tokens + turn.output_tokens)} {t('sessionTimeline.tok')} · {fmtCost(turn.cost)}
           </span>
         </div>
 
         {/* bar area */}
-        <div style={{ flex: 1, position: 'relative', height: ROW_H, display: 'flex', alignItems: 'center' }}>
+        <div style={{ flex: 1, minWidth: 0, position: 'relative', height: ROW_H, display: 'flex', alignItems: 'center' }}>
           {/* turn background span */}
           <div style={{
             position: 'absolute',
             left: pct(turn.start_ms, duration),
             width: wPct(turn.end_ms - turn.start_ms, duration),
+            maxWidth: `calc(100% - ${pct(turn.start_ms, duration)})`,
             height: BAR_H,
             background: 'var(--surface2)',
             borderRadius: 3,
@@ -302,6 +318,7 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                 position: 'absolute',
                 left: pct(turn.start_ms, duration),
                 width: wPct(turn.llm_ms, duration),
+                maxWidth: `calc(100% - ${pct(turn.start_ms, duration)})`,
                 height: BAR_H,
                 top: maxLanes > 1 ? 0 : undefined,
                 background: turn.tool_calls.length > 0 ? LLM_COLOR : LLM_COLOR_L,
@@ -320,6 +337,7 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                 position: 'absolute',
                 left: pct(tc.start_ms, duration),
                 width: wPct(Math.max(tc.duration_ms, 50), duration),
+                maxWidth: `calc(100% - ${pct(tc.start_ms, duration)})`,
                 height: LANE_H,
                 top: maxLanes > 1 ? tc.lane * (LANE_H + 2) : undefined,
                 ...toolStyles.get(tc.tool_name),
@@ -330,18 +348,17 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
             />
           ))}
 
-          {/* duration label */}
-          <span style={{
-            position: 'absolute',
-            left: `calc(${pct(turn.end_ms, duration)} + 4px)`,
-            fontSize: 9,
-            color: 'var(--muted)',
-            fontVariantNumeric: 'tabular-nums',
-            whiteSpace: 'nowrap',
-          }}>
-            {fmtMs(turn.end_ms - turn.start_ms)}
-          </span>
         </div>
+        {/* Reserve a real column so endpoint labels never extend past the plot. */}
+        <span title={fmtMs(turn.end_ms - turn.start_ms)} style={{
+          width: GANTT_DURATION_WIDTH, flexShrink: 0, paddingLeft: 6,
+          fontSize: 9,
+          color: 'var(--muted)',
+          fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap',
+        }}>
+          {fmtMs(turn.end_ms - turn.start_ms)}
+        </span>
       </div>
 
       {/* ── Inline expansion ── */}
@@ -1137,6 +1154,8 @@ export default function SessionTimeline() {
             {/* Gantt chart */}
             <div
               ref={chartRef}
+              role="region"
+              aria-label={t('sessionTimeline.executionGantt')}
               style={{
                 background: 'var(--surface)',
                 border: '1px solid var(--border)',
@@ -1151,8 +1170,8 @@ export default function SessionTimeline() {
                   {t('sessionTimeline.noTimingData')}
                 </div>
               ) : (
-                <div style={{ minWidth: 600 }}>
-                  <TimeAxis duration={timeline.duration_ms} labelW={120} />
+                <div style={{ minWidth: 0 }}>
+                  <TimeAxis duration={timeline.duration_ms} />
                   {(() => {
                     // Group turns by user turn (a user turn = one user message → N assistant steps)
                     const groups: Array<{ userTurnIdx: number; turns: typeof timeline.turns }> = [];

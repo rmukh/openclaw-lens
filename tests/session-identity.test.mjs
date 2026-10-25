@@ -180,3 +180,29 @@ test('live tracking discovers an agent directory created after startup and inges
     db.close();
   }
 });
+
+test('offline gateway error and close events schedule a single bounded reconnect', { timeout: 10000 }, async t => {
+  const { home, write } = fixture(t);
+  let attempts = 0;
+  const gateway = createServer();
+  gateway.on('upgrade', (_request, socket) => {
+    attempts++;
+    socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+  });
+  gateway.listen(0, '127.0.0.1');
+  await new Promise(resolve => gateway.once('listening', resolve));
+  write('openclaw.json', { gateway: { port: gateway.address().port } });
+  const db = openDb(':memory:');
+  initSchema(db);
+  const stop = setupLiveWs(createServer(), db, home);
+  try {
+    // Retry at approximately 1s and 3s. Duplicate error/close scheduling used
+    // to produce seven attempts here, growing exponentially while offline.
+    await delay(3500);
+    assert.ok(attempts >= 2 && attempts <= 3, `Expected bounded backoff, saw ${attempts} attempts`);
+  } finally {
+    stop();
+    await new Promise(resolve => gateway.close(resolve));
+    db.close();
+  }
+});

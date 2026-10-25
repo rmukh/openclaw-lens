@@ -98,6 +98,12 @@ In Sessions, choose the sort field in the dropdown and click the adjacent arrow
 button to switch between ↑ ascending and ↓ descending. Direction applies to every
 field. Last active is the default and includes the former Newest sort behavior.
 
+Select **Custom range** in the time filter to choose start and end dates, shown
+as two calendar inputs separated by `-`. Both dates are included in your local
+timezone. Sessions appear when they have any message in that interval, even if
+they also have newer activity. Token, cost, error, and cache totals reflect only
+messages within the interval. Missing or reversed dates show a validation message.
+
 The **Workspace / Run** column shows the workspace folder above the session's
 name or run key. Filter by workspace, or search by workspace, session name, agent,
 routing key, or session ID. Hover over a workspace to see its full path; expand a

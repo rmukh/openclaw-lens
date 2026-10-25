@@ -14,49 +14,61 @@ export function sessionsRouter(db: Database.Database, metadataHome?: string): Ro
   // GET /api/sessions — list all sessions with summary
   r.get('/', (req: Request, res: Response) => {
     const agentFilter = req.query.agent as string | undefined;
-    const fromFilter  = req.query.from  as string | undefined;
-    const fromTs = fromFilter ? Number(fromFilter) : 0;
+    const timestamp = (value: unknown): number | undefined => value === undefined ? undefined
+      : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+    const fromTs = timestamp(req.query.from);
+    const toTs = timestamp(req.query.to);
+    if ([fromTs, toTs].some(value => value !== undefined && (!Number.isSafeInteger(value) || Math.abs(value) > 8.64e15))
+      || (fromTs !== undefined && toTs !== undefined && fromTs >= toTs)) {
+      res.status(400).json({ error: 'Invalid time range: from must be before to, using millisecond timestamps.' });
+      return;
+    }
+    const bounds: { operator: string; value: number }[] = [];
+    if (fromTs !== undefined) bounds.push({ operator: '>=', value: fromTs });
+    if (toTs !== undefined) bounds.push({ operator: '<', value: toTs });
+    const rangeSql = (alias: string) => bounds.map(bound => `${alias}.timestamp ${bound.operator} ?`).join(' AND ');
+    const rangeParams = bounds.map(bound => bound.value);
+    const timeFilter = bounds.length > 0;
 
     const wheres: string[] = [];
     const params: unknown[] = [];
     if (agentFilter) { wheres.push('s.agent_name = ?'); params.push(agentFilter); }
-    // Include sessions that have ANY message in range (not just started_at)
-    if (fromTs > 0) {
-      wheres.push('(SELECT MAX(m0.timestamp) FROM messages m0 WHERE m0.session_id = s.id) >= ?');
-      params.push(fromTs);
+    // Match ANY message in range, including sessions that were also active later.
+    if (timeFilter) {
+      wheres.push(`EXISTS (SELECT 1 FROM messages m0 WHERE m0.session_id = s.id AND ${rangeSql('m0')})`);
+      params.push(...rangeParams);
     }
     const where = wheres.length > 0 ? ' WHERE ' + wheres.join(' AND ') : '';
 
     // When time filter is active, compute cost/tokens from messages in range only
-    // Use parameterized queries — push fromTs into params for each subquery placeholder
-    const timeFilter = fromTs > 0;
+    // Use parameterized queries — bind the selected bounds for each subquery
     const costExpr = timeFilter
-      ? `(SELECT COALESCE(SUM(mc.cost_total), 0) FROM messages mc WHERE mc.session_id = s.id AND mc.role = 'assistant' AND mc.model NOT IN ('delivery-mirror', 'gateway-injected') AND mc.timestamp >= ?)`
+      ? `(SELECT COALESCE(SUM(mc.cost_total), 0) FROM messages mc WHERE mc.session_id = s.id AND mc.role = 'assistant' AND mc.model NOT IN ('delivery-mirror', 'gateway-injected') AND ${rangeSql('mc')})`
       : 's.total_cost';
     const tokensExpr = timeFilter
-      ? `(SELECT COALESCE(SUM(mt.total_tokens), 0) FROM messages mt WHERE mt.session_id = s.id AND mt.role = 'assistant' AND mt.model NOT IN ('delivery-mirror', 'gateway-injected') AND mt.timestamp >= ?)`
+      ? `(SELECT COALESCE(SUM(mt.total_tokens), 0) FROM messages mt WHERE mt.session_id = s.id AND mt.role = 'assistant' AND mt.model NOT IN ('delivery-mirror', 'gateway-injected') AND ${rangeSql('mt')})`
       : 's.total_tokens';
     const msgsExpr = timeFilter
-      ? `(SELECT COUNT(*) FROM messages mm WHERE mm.session_id = s.id AND mm.role = 'assistant' AND mm.model NOT IN ('delivery-mirror', 'gateway-injected') AND mm.timestamp >= ?)`
+      ? `(SELECT COUNT(*) FROM messages mm WHERE mm.session_id = s.id AND mm.role = 'assistant' AND mm.model NOT IN ('delivery-mirror', 'gateway-injected') AND ${rangeSql('mm')})`
       : 's.total_messages';
     const errExpr = timeFilter
-      ? `(SELECT COUNT(*) FROM messages me WHERE me.session_id = s.id AND me.has_error = 1 AND me.timestamp >= ?)`
+      ? `(SELECT COUNT(*) FROM messages me WHERE me.session_id = s.id AND me.has_error = 1 AND ${rangeSql('me')})`
       : 's.error_count';
     const crExpr = timeFilter
-      ? `(SELECT COALESCE(SUM(m2.cache_read), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected') AND m2.timestamp >= ?)`
+      ? `(SELECT COALESCE(SUM(m2.cache_read), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected') AND ${rangeSql('m2')})`
       : `(SELECT COALESCE(SUM(m2.cache_read), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected'))`;
     const cwExpr = timeFilter
-      ? `(SELECT COALESCE(SUM(m2.cache_write), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected') AND m2.timestamp >= ?)`
+      ? `(SELECT COALESCE(SUM(m2.cache_write), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected') AND ${rangeSql('m2')})`
       : `(SELECT COALESCE(SUM(m2.cache_write), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected'))`;
     const inpExpr = timeFilter
-      ? `(SELECT COALESCE(SUM(m2.input_tokens), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected') AND m2.timestamp >= ?)`
+      ? `(SELECT COALESCE(SUM(m2.input_tokens), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected') AND ${rangeSql('m2')})`
       : `(SELECT COALESCE(SUM(m2.input_tokens), 0) FROM messages m2 WHERE m2.session_id = s.id AND m2.role = 'assistant' AND m2.model NOT IN ('delivery-mirror', 'gateway-injected'))`;
 
     // Build parameterized params: subquery placeholders (in SELECT) bind BEFORE WHERE clause params
     const queryParams: unknown[] = [];
     if (timeFilter) {
-      // 7 subqueries need fromTs: msgs, cost, tokens, errors, cache_read, cache_write, input_tokens
-      for (let i = 0; i < 7; i++) queryParams.push(fromTs);
+      // 7 subqueries need the same range bounds: msgs, cost, tokens, errors, cache_read, cache_write, input_tokens
+      for (let i = 0; i < 7; i++) queryParams.push(...rangeParams);
     }
     queryParams.push(...params);
 

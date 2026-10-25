@@ -9,6 +9,8 @@ import {
 
 import { averageTokens, sortSessions } from '../lib/session-sort';
 import type { SessionSortField, SortDirection } from '../lib/session-sort';
+import { localDateInput, sessionDateRange } from '../lib/session-date-range';
+import type { SessionTimeFilter } from '../lib/session-date-range';
 
 const ACTIVE_SESSION_THRESHOLD_MS = 10 * 60 * 1_000;
 const COPIED_FEEDBACK_MS = 1_500;
@@ -74,7 +76,9 @@ export default function Sessions() {
   const selectedRowRef = useRef<HTMLTableRowElement | null>(null);
   const shouldAutoScroll = useRef(false);
   const [agentFilter, setAgentFilter] = useState(() => searchParams.get('agent') || '');
-  const [timeFilter, setTimeFilter] = useState('all');
+  const [timeFilter, setTimeFilter] = useState<SessionTimeFilter>('all');
+  const [customStart, setCustomStart] = useState(() => localDateInput());
+  const [customEnd, setCustomEnd] = useState(() => localDateInput());
   const [sortBy, setSortBy] = useState<SessionSortField>('last_active');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [cronFilter, setCronFilter] = useState('all');
@@ -166,17 +170,13 @@ export default function Sessions() {
   }, [selected]);
 
   // Build query params for session list fetch
-  const timeFrom = useMemo(() => {
-    const now = Date.now();
-    if (timeFilter === 'today') { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
-    if (timeFilter === '7d') return now - 7 * 86400000;
-    if (timeFilter === '30d') return now - 30 * 86400000;
-    return 0; // all
-  }, [timeFilter]);
+  const dateRange = useMemo(() => sessionDateRange(timeFilter, customStart, customEnd), [timeFilter, customStart, customEnd]);
   const sessQs = new URLSearchParams();
   if (agentFilter) sessQs.set('agent', agentFilter);
-  if (timeFrom > 0) sessQs.set('from', String(timeFrom));
-  const { data: sessions, loading, error: sessionsError } = useFetch<Session[]>(`/api/sessions?${sessQs}`, [agentFilter, timeFilter]);
+  if (dateRange.from !== undefined) sessQs.set('from', String(dateRange.from));
+  if (dateRange.to !== undefined) sessQs.set('to', String(dateRange.to));
+  const { data: sessions, loading, error: sessionsError } = useFetch<Session[]>(
+    dateRange.error ? '' : `/api/sessions?${sessQs}`, [agentFilter, timeFilter, customStart, customEnd]);
   const { data: statsData } = useFetch<{ agents: string[] }>('/api/stats');
   const { data: detail } = useFetch<SessionDetail | null>(
     selected ? `/api/sessions/${selected}` : '',
@@ -335,12 +335,24 @@ export default function Sessions() {
           <option value="">{t('sessions.allWorkspaces')}</option>
           {workspaces.map(workspace => <option key={workspace.value} value={workspace.value}>{workspace.label}</option>)}
         </select>
-        <select value={timeFilter} onChange={e => setTimeFilter(e.target.value)}>
+        <select aria-label={t('sessions.timeRange')} value={timeFilter} onChange={e => setTimeFilter(e.target.value as SessionTimeFilter)}>
           <option value="today">{t('sessions.todayFilter')}</option>
           <option value="7d">{t('sessions.last7d')}</option>
           <option value="30d">{t('sessions.last30d')}</option>
           <option value="all">{t('sessions.allTime')}</option>
+          <option value="custom">{t('sessions.customRange')}</option>
         </select>
+        {timeFilter === 'custom' && (
+          <div role="group" aria-label={t('sessions.customRange')} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+              <input type="date" aria-label={t('sessions.startDate')} value={customStart} max={customEnd || undefined} required aria-invalid={!!dateRange.error} aria-describedby={dateRange.error ? 'session-date-error' : undefined} onChange={e => setCustomStart(e.target.value)} style={{ padding: '.35rem .55rem' }} />
+            </label>
+            <span aria-hidden="true" style={{ color: 'var(--muted)' }}>-</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+              <input type="date" aria-label={t('sessions.endDate')} value={customEnd} min={customStart || undefined} required aria-invalid={!!dateRange.error} aria-describedby={dateRange.error ? 'session-date-error' : undefined} onChange={e => setCustomEnd(e.target.value)} style={{ padding: '.35rem .55rem' }} />
+            </label>
+          </div>
+        )}
         <select value={cronFilter} onChange={e => setCronFilter(e.target.value)}>
           <option value="all">{t('sessions.allSessions')}</option>
           <option value="cron">{t('sessions.cronOnly')}</option>
@@ -369,7 +381,7 @@ export default function Sessions() {
         </button>
         {(agentFilter || workspaceFilter || cronFilter !== 'all' || timeFilter !== 'all' || sortBy !== 'last_active' || sortDirection !== 'desc' || sessionIdFilter) && (
           <button
-            onClick={() => { setAgentFilter(''); setWorkspaceFilter(''); setTimeFilter('all'); setCronFilter('all'); setSortBy('last_active'); setSortDirection('desc'); setSessionIdFilter(''); }}
+            onClick={() => { setAgentFilter(''); setWorkspaceFilter(''); setTimeFilter('all'); setCustomStart(localDateInput()); setCustomEnd(localDateInput()); setCronFilter('all'); setSortBy('last_active'); setSortDirection('desc'); setSessionIdFilter(''); }}
             style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--muted)', padding: 'var(--space-1) var(--space-2)', cursor: 'pointer', fontSize: 12, letterSpacing: '.08em', textTransform: 'uppercase' }}
           >
             {t('common.clear')}
@@ -379,7 +391,9 @@ export default function Sessions() {
 
       <div style={{ overflow: 'auto' }}>
         {/* ── Sessions table ── */}
-          {sessionsError ? (
+          {dateRange.error ? (
+            <div id="session-date-error" role="alert" style={{ padding: 'var(--space-4)' }}><AlertBanner variant="error">{t('sessions.' + dateRange.error)}</AlertBanner></div>
+          ) : sessionsError ? (
             <div style={{ padding: 'var(--space-4)' }}><AlertBanner variant="error">{sessionsError}</AlertBanner></div>
           ) : loading ? (
             <Loading />

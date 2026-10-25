@@ -168,6 +168,7 @@ export function setupLiveWs(
 
     gatewayWs.on('open', () => {
       backoffMs = 1000;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       broadcast(JSON.stringify({ type: 'gateway_status', status: 'connected', url }));
     });
 
@@ -192,8 +193,11 @@ export function setupLiveWs(
   }
 
   function scheduleReconnect() {
-    if (stopped) return;
+    // A failed WebSocket emits both error and close. They share one retry;
+    // otherwise offline gateways double the number of connections each cycle.
+    if (stopped || reconnectTimer) return;
     reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
       backoffMs = Math.min(backoffMs * 2, MAX_RECONNECT_BACKOFF_MS);
       connectGateway();
     }, backoffMs);
