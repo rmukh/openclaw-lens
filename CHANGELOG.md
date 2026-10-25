@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A combined Workspace / Run column in Sessions, with workspace filtering and search by workspace, run/session name, agent, routing key, or UUID. Expanded details include the workspace path and session key.
+- Workspace and session-name metadata from OpenClaw transcripts, agent configuration, and session indexes. Existing databases automatically re-ingest transcript metadata; older unnamed sessions remain visible.
+- Demo coverage for two workspaces, multiple runs, a named session, and a legacy session without metadata.
+
+### Changed
+
+- Replace the sort direction dropdown with an arrow button that toggles ascending/descending, including keyboard support and accessible state.
+
+### Fixed
+
+- Treat Windows path separators correctly when locating session directories for live updates.
+- Discover agent/session directories created while the dashboard is running and ingest their logs automatically.
+
 ## v0.2.2
 
 ### Added

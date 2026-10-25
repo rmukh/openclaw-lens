@@ -94,8 +94,25 @@ claw-lens 就是在这个背景下做的。对 agent 来说，最该盯的不是
 
 详细的逐页功能说明：**[claw-lens.com/monitoring/overview](https://claw-lens.com/monitoring/overview)**
 
-在会话列表中，第一个排序下拉框选择字段，第二个选择方向：↑ 为升序，↓ 为降序。
+在会话列表中，用下拉框选择排序字段，点击旁边的箭头按钮切换方向：↑ 为升序，↓ 为降序。
 所有字段都支持两个方向。默认按最后活跃时间降序排列，与原来的“最新”排序一致。
+
+**工作区 / 运行** 列在上方显示工作区目录名，下方显示会话名称或运行键。可以按工作区
+筛选，也可以搜索工作区、会话名称、agent、会话键或会话 ID。悬停工作区可查看完整路径，
+展开会话可查看完整路径和会话键。名称取自 OpenClaw 会话索引及日志元数据；缺少元数据
+的旧会话使用 agent 名称，未知的运行名称显示为 `—`。
+仪表盘运行期间会自动发现新建的 agent 目录，并在表格下次刷新时显示其中的会话。
+
+为 `workspace-1` 和 `workspace-2` 配置各自的工作区目录后，可启动命名运行：
+
+```bash
+openclaw agent --agent workspace-1 --session-key agent:workspace-1:run1 --message "Inspect this workspace"
+openclaw agent --agent workspace-1 --session-key agent:workspace-1:run2 --message "Review the changes"
+openclaw agent --agent workspace-2 --session-key agent:workspace-2:run1 --message "Inspect this workspace"
+```
+
+`--agent` 选择已配置的 agent ID，`--session-key` 选择运行。带 agent 前缀的会话键必须使用
+相同的 agent ID。工作区路径来自日志、会话专属工作区元数据或 agent 配置。
 
 ---
 
@@ -133,8 +150,9 @@ npm run dev
 <http://localhost:6060>，API 地址为 <http://localhost:4242>。该模式读取本地
 OpenClaw 会话，将数据库保存到 `.dev/claw-lens.db`，与已安装仪表盘的数据库分开。
 
-运行 `npm run dev:demo` 可用四个模拟会话体验时间线配色和会话排序，包括自定义工具名
-和失败的工具调用。模拟日志保存在 `.dev/demo-openclaw/`，数据库保存在
+运行 `npm run dev:demo` 可用四个模拟会话体验时间线配色和会话排序，覆盖两个工作区，
+包括命名运行、缺少元数据的旧会话、自定义工具名和失败的工具调用。
+模拟日志保存在 `.dev/demo-openclaw/`，数据库保存在
 `.dev/demo.db`。该模式不会执行工具，也不会修改本地 OpenClaw 安装。
 
 两个命令均支持热更新。切换模式前请按 Ctrl+C 停止当前开发服务，因为它们使用相同端口。

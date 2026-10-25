@@ -12,10 +12,10 @@ const DEFAULT_GATEWAY_PORT = 18789;
 const MAX_RECONNECT_BACKOFF_MS = 30_000;
 const INGEST_DEBOUNCE_MS = 500;
 
-function getGatewayToken(): string | null {
+function getGatewayToken(clawHome?: string): string | null {
   try {
     const cfgPath = path.join(
-      process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw'),
+      clawHome || process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw'),
       'openclaw.json'
     );
     const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
@@ -25,10 +25,10 @@ function getGatewayToken(): string | null {
   }
 }
 
-function getGatewayPort(): number {
+function getGatewayPort(clawHome?: string): number {
   try {
     const cfgPath = path.join(
-      process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw'),
+      clawHome || process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw'),
       'openclaw.json'
     );
     const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
@@ -151,8 +151,8 @@ export function setupLiveWs(
 
   function connectGateway() {
     if (stopped) return;
-    const token = getGatewayToken();
-    const port = getGatewayPort();
+    const token = getGatewayToken(clawHome);
+    const port = getGatewayPort(clawHome);
     const url = `ws://127.0.0.1:${port}`;
 
     broadcast(JSON.stringify({ type: 'gateway_status', status: 'connecting', url }));
@@ -221,28 +221,53 @@ export function setupLiveWs(
   const base = clawHome || process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw');
   const sessionsPattern = path.join(base, 'agents', '**', 'sessions');
   let ingestDebounce: ReturnType<typeof setTimeout> | null = null;
-
-  glob(sessionsPattern, { nodir: false }).then(dirs => {
-    for (const dir of dirs) {
+  const sessionWatchers = new Map<string, fs.FSWatcher>();
+  let scanning = false;
+  const scheduleIngest = () => {
+    if (ingestDebounce) clearTimeout(ingestDebounce);
+    ingestDebounce = setTimeout(async () => {
+      if (stopped) return;
       try {
-        fs.watch(dir, (_event, filename) => {
-          if (!filename?.endsWith('.jsonl')) return;
-          if (ingestDebounce) clearTimeout(ingestDebounce);
-          ingestDebounce = setTimeout(async () => {
-            await ingestAll(db, { clawHome });
-            broadcast(JSON.stringify({ type: 'data_updated', ts: Date.now() }));
-          }, INGEST_DEBOUNCE_MS);
-        });
-      } catch {
-        // directory may not exist yet
+        await ingestAll(db, { clawHome });
+        broadcast(JSON.stringify({ type: 'data_updated', ts: Date.now() }));
+      } catch (error) { console.error('Live session ingestion failed:', error); }
+    }, INGEST_DEBOUNCE_MS);
+  };
+  const discoverSessionDirectories = async () => {
+    if (stopped || scanning) return;
+    scanning = true;
+    try {
+      const dirs = await glob(sessionsPattern, { nodir: false, windowsPathsNoEscape: true });
+      if (stopped) return;
+      let added = false;
+      for (const [dir, watcher] of sessionWatchers) {
+        if (!dirs.includes(dir)) { watcher.close(); sessionWatchers.delete(dir); }
       }
-    }
-  }).catch(() => {});
+      for (const dir of dirs) {
+        if (sessionWatchers.has(dir)) continue;
+        try {
+          const watcher = fs.watch(dir, (_event, filename) => {
+            if (filename?.endsWith('.jsonl')) scheduleIngest();
+          });
+          watcher.on('error', () => { watcher.close(); sessionWatchers.delete(dir); });
+          sessionWatchers.set(dir, watcher);
+          added = true;
+        } catch { /* directory may have disappeared during discovery */ }
+      }
+      // Agents/workspaces created after startup need their existing logs ingested too.
+      if (added) scheduleIngest();
+    } catch { /* retry discovery on the next interval */ }
+    finally { scanning = false; }
+  };
+  void discoverSessionDirectories();
+  const directoryDiscovery = setInterval(() => { void discoverSessionDirectories(); }, 5_000);
 
   return () => {
     stopped = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (ingestDebounce) clearTimeout(ingestDebounce);
+    clearInterval(directoryDiscovery);
+    for (const watcher of sessionWatchers.values()) watcher.close();
     gatewayWs?.close();
     wss.close();
   };

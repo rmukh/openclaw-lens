@@ -94,9 +94,31 @@ claw-lens is built for this new reality. Cost, not latency, is the dominant sign
 
 For detailed per-page, per-tab documentation: **[claw-lens.com/monitoring/overview](https://claw-lens.com/monitoring/overview)**
 
-In Sessions, choose the sort field in the first sorting dropdown and the direction
-in the second: ↑ for ascending or ↓ for descending. Direction applies to every
+In Sessions, choose the sort field in the dropdown and click the adjacent arrow
+button to switch between ↑ ascending and ↓ descending. Direction applies to every
 field. Last active is the default and includes the former Newest sort behavior.
+
+The **Workspace / Run** column shows the workspace folder above the session's
+name or run key. Filter by workspace, or search by workspace, session name, agent,
+routing key, or session ID. Hover over a workspace to see its full path; expand a
+session for the full path and routing key. Names come from OpenClaw's session
+index and transcript metadata. Older sessions without metadata fall back to the
+agent name, with an empty run shown as `—`.
+New agent directories are discovered automatically while the dashboard is
+running; the table displays their sessions on its next refresh.
+
+For example, after configuring agents `workspace-1` and `workspace-2` with their
+respective workspace directories, start named runs with:
+
+```bash
+openclaw agent --agent workspace-1 --session-key agent:workspace-1:run1 --message "Inspect this workspace"
+openclaw agent --agent workspace-1 --session-key agent:workspace-1:run2 --message "Review the changes"
+openclaw agent --agent workspace-2 --session-key agent:workspace-2:run1 --message "Inspect this workspace"
+```
+
+`--agent` selects the configured agent ID; `--session-key` selects the run.
+An agent-prefixed key must use that same agent ID. Workspace paths come from the
+transcript, session-specific workspace metadata, or agent configuration.
 
 ---
 
@@ -136,7 +158,8 @@ This mode reads your local OpenClaw sessions and stores its database in
 `.dev/claw-lens.db`, leaving the installed dashboard's database separate.
 
 Run `npm run dev:demo` to try the timeline colors and session sorting with four
-synthetic sessions, including custom tool names and failed tool calls. Demo
+synthetic sessions across two workspaces, including named runs, a legacy session
+without metadata, custom tool names, and failed tool calls. Demo
 logs are stored in `.dev/demo-openclaw/` and their database in `.dev/demo.db`.
 This mode never executes tools or modifies your OpenClaw installation.
 

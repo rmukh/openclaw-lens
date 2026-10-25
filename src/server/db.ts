@@ -34,6 +34,8 @@ export function initSchema(db: Database.Database): void {
       is_cron      INTEGER NOT NULL DEFAULT 0,
       cron_task    TEXT,
       task_summary TEXT,
+      workspace_path TEXT,
+      session_label TEXT,
       ingested_at  INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );
 
@@ -177,17 +179,18 @@ export function initSchema(db: Database.Database): void {
     }
   } catch { /* ignore */ }
 
-  // Migration v3: parser changes that require full re-ingest:
+  // Parser changes that require full re-ingest:
   //   v2: total_messages now assistant-only non-synthetic
   //   v3: tool_calls.success now derived from details.status (not the unreliable
   //       isError field which was almost always false), and duration_ms fallback
   //       uses dispatch time instead of LLM-call-start (was overestimating by ~100x).
+  //   v4: retain transcript workspace paths and user-defined session names.
   // Clearing ingest_state forces re-parse of every JSONL on next ingest.
   try {
     const v = db.prepare("SELECT value FROM settings WHERE key = 'session_aggregate_version'").get() as { value: string } | undefined;
-    if (!v || v.value !== '3') {
+    if (!v || v.value !== '4') {
       db.exec(`DELETE FROM ingest_state`);
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('session_aggregate_version', '3')").run();
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('session_aggregate_version', '4')").run();
     }
   } catch { /* ignore */ }
 
@@ -197,6 +200,11 @@ export function initSchema(db: Database.Database): void {
   try {
     db.exec(`ALTER TABLE sessions ADD COLUMN task_summary TEXT`);
   } catch { /* column already exists */ }
+  // v4: retain transcript workspace and named session metadata on existing installs.
+  for (const column of ['workspace_path', 'session_label']) {
+    const columns = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
+    if (!columns.some(c => c.name === column)) db.exec(`ALTER TABLE sessions ADD COLUMN ${column} TEXT`);
+  }
   try {
     db.exec(`ALTER TABLE messages ADD COLUMN is_tool_result INTEGER NOT NULL DEFAULT 0`);
   } catch { /* column already exists */ }
@@ -342,9 +350,10 @@ function ingestSession(
   toolCalls: ReturnType<typeof parseSessionFile>['toolCalls']
 ): void {
   const upsertSession = db.prepare(`
-    INSERT INTO sessions (id, agent_name, started_at, ended_at, total_messages, total_cost, total_tokens, primary_model, error_count, is_cron, cron_task, task_summary)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions (id, agent_name, started_at, ended_at, total_messages, total_cost, total_tokens, primary_model, error_count, is_cron, cron_task, task_summary, workspace_path, session_label)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
+      agent_name = excluded.agent_name,
       ended_at = excluded.ended_at,
       total_messages = excluded.total_messages,
       total_cost = excluded.total_cost,
@@ -353,7 +362,9 @@ function ingestSession(
       error_count = excluded.error_count,
       is_cron = excluded.is_cron,
       cron_task = excluded.cron_task,
-      task_summary = excluded.task_summary
+      task_summary = excluded.task_summary,
+      workspace_path = excluded.workspace_path,
+      session_label = excluded.session_label
   `);
 
   const upsertMessage = db.prepare(`
@@ -363,6 +374,7 @@ function ingestSession(
       stop_reason, error_message, has_error, is_tool_result)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
+      agent_name = excluded.agent_name,
       input_tokens = excluded.input_tokens,
       output_tokens = excluded.output_tokens,
       cache_read = excluded.cache_read,
@@ -384,6 +396,7 @@ function ingestSession(
     INSERT INTO tool_calls (id, message_id, session_id, agent_name, timestamp, tool_name, duration_ms, success, arguments)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id, message_id) DO UPDATE SET
+      agent_name = excluded.agent_name,
       arguments = excluded.arguments,
       duration_ms = excluded.duration_ms,
       success = excluded.success
@@ -392,7 +405,8 @@ function ingestSession(
   const run = db.transaction(() => {
     for (const s of sessions) {
       upsertSession.run(s.id, s.agentName, s.startedAt, s.endedAt, s.totalMessages,
-        s.totalCost, s.totalTokens, s.primaryModel, s.errorCount, s.isCron ? 1 : 0, s.cronTask, s.taskSummary ?? null);
+        s.totalCost, s.totalTokens, s.primaryModel, s.errorCount, s.isCron ? 1 : 0, s.cronTask, s.taskSummary ?? null,
+        s.workspacePath, s.sessionLabel);
     }
     for (const m of messages) {
       upsertMessage.run(m.id, m.sessionId, m.agentName, m.parentId, m.timestamp,

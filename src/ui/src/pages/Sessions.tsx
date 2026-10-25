@@ -15,6 +15,8 @@ const COPIED_FEEDBACK_MS = 1_500;
 
 interface Session {
   id: string; agent_name: string;
+  workspace_name: string; workspace_path: string | null;
+  session_name: string | null; session_key: string | null;
   started_at: number; ended_at: number;
   total_messages: number; total_cost: number; total_tokens: number;
   primary_model: string; error_count: number; duration_ms: number;
@@ -76,6 +78,7 @@ export default function Sessions() {
   const [sortBy, setSortBy] = useState<SessionSortField>('last_active');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [cronFilter, setCronFilter] = useState('all');
+  const [workspaceFilter, setWorkspaceFilter] = useState('');
   const [sessionIdFilter, setSessionIdFilter] = useState('');
   const [detailTab, setDetailTab] = useState<'overview' | 'messages'>('overview');
   const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(new Set());
@@ -185,18 +188,34 @@ export default function Sessions() {
   );
 
   const filtered = useMemo(() => {
-    // Session ID filter: search across all fetched sessions, bypass other filters
-    let list: Session[];
+    // Search names and routing keys as well as opaque transcript ids.
+    let list = (sessions || []).filter(s => !agentFilter || s.agent_name === agentFilter);
+    if (cronFilter === 'cron') list = list.filter(s => s.is_cron);
+    else if (cronFilter === 'non-cron') list = list.filter(s => !s.is_cron);
     if (sessionIdFilter.trim()) {
       const q = sessionIdFilter.trim().toLowerCase();
-      list = (sessions || []).filter(s => s.id.toLowerCase().includes(q));
-    } else {
-      list = (sessions || []).filter(s => !agentFilter || s.agent_name === agentFilter);
-      if (cronFilter === 'cron') list = list.filter(s => s.is_cron);
-      else if (cronFilter === 'non-cron') list = list.filter(s => !s.is_cron);
+      list = list.filter(s => [s.id, s.agent_name, s.workspace_name, s.workspace_path, s.session_name, s.session_key]
+        .some(value => value?.toLowerCase().includes(q)));
     }
+    if (workspaceFilter) list = list.filter(s => (s.workspace_path || s.workspace_name || s.agent_name) === workspaceFilter);
     return sortSessions(list, sortBy, sortDirection);
-  }, [sessions, agentFilter, cronFilter, sortBy, sortDirection, sessionIdFilter]);
+  }, [sessions, agentFilter, cronFilter, workspaceFilter, sortBy, sortDirection, sessionIdFilter]);
+
+  const workspaces = useMemo(() => {
+    const options = new Map<string, string>();
+    for (const session of sessions || []) {
+      options.set(session.workspace_path || session.workspace_name || session.agent_name,
+        session.workspace_name || session.agent_name);
+    }
+    // Keep the active filter visible even when another filter removes its sessions.
+    if (workspaceFilter && !options.has(workspaceFilter)) {
+      options.set(workspaceFilter, workspaceFilter.split(/[\\/]/).pop() || workspaceFilter);
+    }
+    return [...options].sort((a, b) => a[1].localeCompare(b[1])).map(([value, name]) => ({
+      value,
+      label: [...options.values()].filter(n => n === name).length > 1 ? `${name} (${value})` : name,
+    }));
+  }, [sessions, workspaceFilter]);
 
   // ── KPI computations (derived from filtered list so all filters apply) ──
   const kpis = useMemo(() => {
@@ -302,6 +321,7 @@ export default function Sessions() {
         <input
           type="text"
           placeholder={t('sessions.searchPlaceholder')}
+          aria-label={t('sessions.searchPlaceholder')}
           value={sessionIdFilter}
           onChange={e => setSessionIdFilter(e.target.value)}
           style={{ fontFamily: 'var(--font-m)', fontSize: 12, padding: '3px 8px', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 4, width: 240 }}
@@ -310,6 +330,10 @@ export default function Sessions() {
         <select value={agentFilter} onChange={e => setAgentFilter(e.target.value)}>
           <option value="">{t('sessions.allAgents')}</option>
           {(statsData?.agents || []).map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <select aria-label={t('sessions.workspaceFilter')} value={workspaceFilter} onChange={e => setWorkspaceFilter(e.target.value)}>
+          <option value="">{t('sessions.allWorkspaces')}</option>
+          {workspaces.map(workspace => <option key={workspace.value} value={workspace.value}>{workspace.label}</option>)}
         </select>
         <select value={timeFilter} onChange={e => setTimeFilter(e.target.value)}>
           <option value="today">{t('sessions.todayFilter')}</option>
@@ -333,13 +357,19 @@ export default function Sessions() {
           <option value="errors">{t('sessions.sortErrors')}</option>
           <option value="cache_hit">{t('sessions.sortCacheHit')}</option>
         </select>
-        <select aria-label={t('sessions.sortDirection')} value={sortDirection} onChange={e => setSortDirection(e.target.value as SortDirection)} title={t(sortDirection === 'asc' ? 'sessions.sortAscending' : 'sessions.sortDescending')}>
-          <option value="asc" aria-label={t('sessions.sortAscending')}>↑</option>
-          <option value="desc" aria-label={t('sessions.sortDescending')}>↓</option>
-        </select>
-        {(agentFilter || cronFilter !== 'all' || timeFilter !== 'all' || sortBy !== 'last_active' || sortDirection !== 'desc' || sessionIdFilter) && (
+        <button
+          type="button"
+          aria-label={t('sessions.toggleSortDirection')}
+          aria-pressed={sortDirection === 'asc'}
+          title={t(sortDirection === 'asc' ? 'sessions.sortAscendingToggle' : 'sessions.sortDescendingToggle')}
+          onClick={() => setSortDirection(direction => direction === 'asc' ? 'desc' : 'asc')}
+          style={{ minWidth: 34, padding: '.38rem .65rem', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border2)', borderRadius: 'var(--radius-sm)', fontSize: 16, lineHeight: 1 }}
+        >
+          {sortDirection === 'asc' ? '↑' : '↓'}
+        </button>
+        {(agentFilter || workspaceFilter || cronFilter !== 'all' || timeFilter !== 'all' || sortBy !== 'last_active' || sortDirection !== 'desc' || sessionIdFilter) && (
           <button
-            onClick={() => { setAgentFilter(''); setTimeFilter('all'); setCronFilter('all'); setSortBy('last_active'); setSortDirection('desc'); setSessionIdFilter(''); }}
+            onClick={() => { setAgentFilter(''); setWorkspaceFilter(''); setTimeFilter('all'); setCronFilter('all'); setSortBy('last_active'); setSortDirection('desc'); setSessionIdFilter(''); }}
             style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--muted)', padding: 'var(--space-1) var(--space-2)', cursor: 'pointer', fontSize: 12, letterSpacing: '.08em', textTransform: 'uppercase' }}
           >
             {t('common.clear')}
@@ -359,6 +389,7 @@ export default function Sessions() {
                 <tr>
                   <th style={TH_STYLE}>{t('common.session')}</th>
                   <th style={TH_STYLE}>{t('common.agent')}</th>
+                  <th style={TH_STYLE}>{t('sessions.workspaceRun')}</th>
                   <th style={TH_STYLE}>{t('sessions.liveStatus')}</th>
                   <th style={TH_STYLE}>{t('common.model')}</th>
                   <th style={TH_STYLE}>{t('common.tokens')}</th>
@@ -435,6 +466,9 @@ export default function Sessions() {
                 </tr>
               </thead>
               <tbody>
+                {filtered.length === 0 && (
+                  <tr><td colSpan={16} style={{ ...TD_STYLE, padding: 'var(--space-5)', textAlign: 'center', color: 'var(--muted)' }}>{t('sessions.noMatchingSessions')}</td></tr>
+                )}
                 {filtered.map(s => {
                   const rate = cacheHitRate(s.cache_read || 0, s.input_tokens || 0);
                   const hitPct = fmtPct(rate, 4);
@@ -451,6 +485,7 @@ export default function Sessions() {
                   return (
                     <React.Fragment key={s.id}>
                     <tr
+                      data-session-id={s.id}
                       ref={isSelected ? selectedRowRef : null}
                       onClick={() => toggleSessionDetail(s.id)}
                       style={{
@@ -463,6 +498,16 @@ export default function Sessions() {
                         <span style={{ ...MONO_STYLE, color: '#60a5fa', cursor: 'pointer' }}>{s.id.slice(0, 12)}…</span>
                       </td>
                       <td style={TD_STYLE}>{s.agent_name}</td>
+                      <td style={TD_STYLE}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 140, maxWidth: 220 }}>
+                          <span title={s.workspace_path || s.workspace_name || s.agent_name} style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {s.workspace_name || s.agent_name}
+                          </span>
+                          <span title={[s.session_name, s.session_key].filter(Boolean).join('\n')} style={{ color: 'var(--muted)', fontFamily: 'var(--font-m)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {s.session_name || '—'}
+                          </span>
+                        </div>
+                      </td>
                       <td style={TD_STYLE}>
                         {(() => {
                           const IDLE_THRESHOLD = 30 * 60 * 1000;
@@ -528,7 +573,7 @@ export default function Sessions() {
                     </tr>
                     {isSelected && detail && (
                       <tr>
-                        <td colSpan={17} style={{ padding: 0, borderBottom: '2px solid var(--C-blue)' }}>
+                        <td colSpan={16} style={{ padding: 0, borderBottom: '2px solid var(--C-blue)' }}>
                           <div style={{ background: '#0f1724', padding: 'var(--space-5) var(--space-6)' }}>
                             {/* Header */}
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -566,6 +611,9 @@ export default function Sessions() {
                                   return (
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
                                   <div><div style={statStyle}>{t('sessions.detailAgent')}</div><div style={valStyle}>{ds.agent_name}</div></div>
+                                  <div><div style={statStyle}>{t('sessions.workspace')}</div><div style={{ ...valStyle, overflowWrap: 'anywhere' }}>{ds.workspace_path || ds.workspace_name || ds.agent_name}</div></div>
+                                  <div><div style={statStyle}>{t('sessions.runName')}</div><div style={{ ...valStyle, overflowWrap: 'anywhere' }}>{ds.session_name || '—'}</div></div>
+                                  <div><div style={statStyle}>{t('sessions.sessionKey')}</div><div style={{ ...valStyle, overflowWrap: 'anywhere', fontFamily: 'var(--font-m)', fontSize: 11 }}>{ds.session_key || '—'}</div></div>
                                   <div><div style={statStyle}>{t('sessions.detailDuration')}</div><div style={valStyle}>{fmtMs(dur)}</div></div>
                                   <div><div style={statStyle}>{t('sessions.detailStarted')}</div><div style={{ ...valStyle, fontFamily: 'var(--font-m)', fontSize: 12 }}>{fmtDatetime(ds.started_at)}</div></div>
                                   <div><div style={statStyle}>{t('sessions.detailLastUpdated')}</div><div style={{ ...valStyle, fontFamily: 'var(--font-m)', fontSize: 12 }}>{lastUpdated}</div></div>

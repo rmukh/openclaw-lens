@@ -53,7 +53,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
   app.use(express.json());
 
   // API routes
-  app.use('/api/sessions', sessionsRouter(db));
+  app.use('/api/sessions', sessionsRouter(db, opts.clawHome));
   app.use('/api/timeline', timelineRouter(db));
   app.use('/api/tools', toolsRouter(db));
   app.use('/api/stats', statsRouter(db));

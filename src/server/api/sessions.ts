@@ -5,8 +5,10 @@ import { getContextLimit } from '../model-meta';
 import { getClawHome, cleanSlackText } from '../paths';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createSessionIdentityResolver } from '../session-identity';
+import type { SessionIdentitySource } from '../session-identity';
 
-export function sessionsRouter(db: Database.Database): Router {
+export function sessionsRouter(db: Database.Database, metadataHome?: string): Router {
   const r = Router();
 
   // GET /api/sessions — list all sessions with summary
@@ -72,6 +74,8 @@ export function sessionsRouter(db: Database.Database): Router {
         s.is_cron,
         s.cron_task,
         s.task_summary,
+        s.workspace_path,
+        s.session_label,
         (s.ended_at - s.started_at) AS duration_ms,
         (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) AS last_message_at,
         ${crExpr} AS cache_read,
@@ -100,6 +104,7 @@ export function sessionsRouter(db: Database.Database): Router {
       ORDER BY timestamp DESC LIMIT 3
     `);
 
+    const identify = createSessionIdentityResolver(metadataHome);
     const enriched = rows.map(row => {
       const model = (row.primary_model as string) || '';
       const contextLimit = getContextLimit(model);
@@ -124,7 +129,7 @@ export function sessionsRouter(db: Database.Database): Router {
       let status = 'ok';
       if ((row.error_count as number) > 0) status = 'error';
 
-      return { ...row, contextUsed, contextLimit, utilizationPct, pacing, burnTokensPerMin, status };
+      return { ...row, ...identify(row as unknown as SessionIdentitySource), contextUsed, contextLimit, utilizationPct, pacing, burnTokensPerMin, status };
     });
 
     res.json(enriched);
@@ -347,7 +352,8 @@ export function sessionsRouter(db: Database.Database): Router {
       ORDER BY call_count DESC
     `).all(req.params.id);
 
-    res.json({ session, modelBreakdown, toolBreakdown });
+    const identity = createSessionIdentityResolver(metadataHome)(session as SessionIdentitySource);
+    res.json({ session: { ...session, ...identity }, modelBreakdown, toolBreakdown });
   });
 
   // GET /api/sessions/:id/messages — per-message token timeline with seq and latency

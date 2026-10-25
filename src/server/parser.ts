@@ -16,6 +16,8 @@ export interface RawRecord {
   parentId: string | null;
   timestamp: string; // ISO string at top level
   toolUseResult?: unknown;  // present on tool-result user messages
+  cwd?: string;
+  name?: string;
   message?: {
     role: string;
     model?: string;
@@ -97,6 +99,8 @@ export interface ParsedToolCall {
 export interface ParsedSession {
   id: string;
   agentName: string;
+  workspacePath: string | null;
+  sessionLabel: string | null;
   startedAt: number;
   endedAt: number;
   totalMessages: number;
@@ -421,6 +425,8 @@ function buildSession(
   return {
     id: sessionId,
     agentName,
+    workspacePath: records.find(r => r.type === 'session' && typeof r.cwd === 'string')?.cwd ?? null,
+    sessionLabel: [...records].reverse().find(r => r.type === 'session_info' && typeof r.name === 'string' && r.name.trim())?.name ?? null,
     startedAt,
     endedAt,
     totalMessages: assistantMessageCount,
