@@ -1,4 +1,5 @@
 node_modules/
+.dev/
 src/ui/node_modules/
 dist/
 src/ui/dist/

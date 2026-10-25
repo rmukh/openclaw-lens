@@ -7,6 +7,8 @@ import {
   PageHeader, KpiStrip, Kpi, Loading, TabBar, AlertBanner,
 } from '../components/ui';
 
+import { averageTokens, sortSessions } from '../lib/session-sort';
+
 const ACTIVE_SESSION_THRESHOLD_MS = 10 * 60 * 1_000;
 const COPIED_FEEDBACK_MS = 1_500;
 
@@ -182,22 +184,16 @@ export default function Sessions() {
 
   const filtered = useMemo(() => {
     // Session ID filter: search across all fetched sessions, bypass other filters
+    let list: Session[];
     if (sessionIdFilter.trim()) {
       const q = sessionIdFilter.trim().toLowerCase();
-      return (sessions || []).filter(s => s.id.toLowerCase().includes(q));
+      list = (sessions || []).filter(s => s.id.toLowerCase().includes(q));
+    } else {
+      list = (sessions || []).filter(s => !agentFilter || s.agent_name === agentFilter);
+      if (cronFilter === 'cron') list = list.filter(s => s.is_cron);
+      else if (cronFilter === 'non-cron') list = list.filter(s => !s.is_cron);
     }
-    let list = (sessions || []).filter(s => !agentFilter || s.agent_name === agentFilter);
-    if (cronFilter === 'cron') list = list.filter(s => s.is_cron);
-    else if (cronFilter === 'non-cron') list = list.filter(s => !s.is_cron);
-    // Sort
-    // cache_write is NOT a cache hit — exclude from denominator
-    const cacheRate = (s: Session) => { const t = (s.cache_read || 0) + (s.input_tokens || 0); return t > 0 ? (s.cache_read || 0) / t : 0; };
-    if (sortBy === 'newest') list = [...list].sort((a, b) => (b.last_message_at ?? b.started_at) - (a.last_message_at ?? a.started_at));
-    else if (sortBy === 'tokens') list = [...list].sort((a, b) => b.total_tokens - a.total_tokens);
-    else if (sortBy === 'cost') list = [...list].sort((a, b) => b.total_cost - a.total_cost);
-    else if (sortBy === 'errors') list = [...list].sort((a, b) => b.error_count - a.error_count);
-    else if (sortBy === 'cache_hit_asc') list = [...list].sort((a, b) => cacheRate(a) - cacheRate(b));
-    return list;
+    return sortSessions(list, sortBy);
   }, [sessions, agentFilter, cronFilter, sortBy, sessionIdFilter]);
 
   // ── KPI computations (derived from filtered list so all filters apply) ──
@@ -327,6 +323,14 @@ export default function Sessions() {
         <span style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 var(--space-1)' }} />
         <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
           <option value="newest">{t('sessions.sortNewest')}</option>
+          <option value="last_active_desc">{t('sessions.sortLastActiveDesc')}</option>
+          <option value="last_active_asc">{t('sessions.sortLastActiveAsc')}</option>
+          <option value="started_desc">{t('sessions.sortStartedDesc')}</option>
+          <option value="started_asc">{t('sessions.sortStartedAsc')}</option>
+          <option value="duration_desc">{t('sessions.sortDurationDesc')}</option>
+          <option value="duration_asc">{t('sessions.sortDurationAsc')}</option>
+          <option value="avg_per_msg_desc">{t('sessions.sortAvgPerMsgDesc')}</option>
+          <option value="avg_per_msg_asc">{t('sessions.sortAvgPerMsgAsc')}</option>
           <option value="tokens">{t('sessions.sortTokens')}</option>
           <option value="cost">{t('sessions.sortCost')}</option>
           <option value="errors">{t('sessions.sortErrors')}</option>
@@ -439,8 +443,8 @@ export default function Sessions() {
                   const pLabel = s.utilizationPct >= 90 ? t('common.critical') : s.utilizationPct >= 70 ? t('common.warning') : t('common.healthy');
                   const durationMin = Math.round((s.duration_ms || 0) / 60000);
                   const durationStr = durationMin < 60 ? `${durationMin}m` : `${Math.floor(durationMin / 60)}h${durationMin % 60}m`;
-                  const avgPerMsg = s.total_messages > 0 ? Math.round(s.total_tokens / s.total_messages) : 0;
-                  const lastActiveParts = fmtDateParts(s.last_message_at || s.started_at);
+                  const avgPerMsg = s.total_messages > 0 ? Math.round(averageTokens(s)) : 0;
+                  const lastActiveParts = fmtDateParts(s.last_message_at ?? s.started_at);
                   const startedParts = fmtDateParts(s.started_at);
                   const isSelected = s.id === selected;
                   return (
@@ -461,7 +465,7 @@ export default function Sessions() {
                       <td style={TD_STYLE}>
                         {(() => {
                           const IDLE_THRESHOLD = 30 * 60 * 1000;
-                          const lastTs = s.last_message_at || s.started_at;
+                          const lastTs = s.last_message_at ?? s.started_at;
                           const isRunning = (Date.now() - lastTs) < IDLE_THRESHOLD;
                           return (
                             <span style={{

@@ -80,11 +80,11 @@ claw-lens is built for this new reality. Cost, not latency, is the dominant sign
 - **Token Usage** — 4-dimension cost breakdown (input, output, cache read, cache write) by agent, model, and time period; cache hit rate; cron vs. manual comparison
 - **Agents** — per-agent statistics, cost, session count, and agent memory files
 - **Live Monitor** — real-time agent activity feed via WebSocket proxy to the OpenClaw Gateway
-- **Sessions** — session table with filters by agent, model, date, cost; context health indicator; full tool call trace per session
+- **Sessions** — session table with filters by agent, model, date, cost; sorting by last activity, start time, duration, and average tokens per message in either direction, alongside existing sorts; context health indicator; full tool call trace per session
 - **Cron** — scheduled task list, run history, status, and cost tracking
 - **Memory** — agent workspace and memory file viewer across all agents
 - **Audit** — security event timeline with rule-based risk scoring (high/medium/low) for file access, shell commands, external HTTP calls, sensitive data exposure (34 regex patterns), prompt injection detection (9 patterns), and per-agent behavioral anomaly detection over 30-day baselines
-- **Session Timeline** — turn-by-turn message trace with token counts, stop reasons, and tool call details
+- **Session Timeline** — turn-by-turn message trace with token counts, stop reasons, and tool call details; session-specific tool colors chosen for perceptual separation, including custom tools, with stripe patterns for crowded palettes and red outlines for failed calls
 - **Profiler** — session rankings by token consumption and tool timing analysis
 - **Deep Turns** — detects deep turn sequences with repetitive tool patterns, unique-ratio scoring, and per-agent breakdown
 - **Context Breakdown** — per-turn context window fill visualization with system/history/tool-result token splits and model-accurate capacity gauge
@@ -125,6 +125,20 @@ npm run dev
 ```
 
 Runs backend (Express + ts-node-dev, port 4242) and frontend (React + Vite, port 6060) concurrently with hot reload. Changes to `src/server/` or `src/ui/` apply instantly.
+
+For development with a separate database, run `npm run dev:local`. The dashboard
+is available at <http://localhost:6060> and the API at <http://localhost:4242>.
+This mode reads your local OpenClaw sessions and stores its database in
+`.dev/claw-lens.db`, leaving the installed dashboard's database separate.
+
+Run `npm run dev:demo` to try the timeline colors and session sorting with four
+synthetic sessions, including custom tool names and failed tool calls. Demo
+logs are stored in `.dev/demo-openclaw/` and their database in `.dev/demo.db`.
+This mode never executes tools or modifies your OpenClaw installation.
+
+Both commands support hot reload. Stop the current development server with
+Ctrl+C before switching modes, since they use the same ports. Run `npm test`
+for the palette, session sorting, and session-file discovery regression checks.
 
 ```bash
 npm run build && npm start   # production build

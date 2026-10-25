@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { createToolStyles, LLM_COLOR, ERROR_COLOR } from '../lib/tool-colors';
+import type { ToolStyle } from '../lib/tool-colors';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import { useFetch, fmtMs, fmtTokens, fmtCost } from '../hooks';
@@ -64,46 +66,7 @@ interface TimelineData {
 }
 
 /* ── color palette ── */
-const TOOL_COLORS: Record<string, string> = {
-  // lowercase keys (as returned by OpenClaw JSONL)
-  exec:           '#fbbf24',
-  read:           '#34d399',
-  write:          '#a78bfa',
-  edit:           '#22d3ee',
-  glob:           '#a3e635',
-  grep:           '#bef264',
-  process:        '#2dd4bf',
-  sessions_spawn: '#f472b6',
-  sessions_send:  '#f9a8d4',
-  sessions_list:  '#f472b6',
-  sessions_yield: '#e879f9',
-  session_status: '#c4b5fd',
-  web_fetch:      '#fb923c',
-  web_search:     '#fdba74',
-  subagents:      '#c4b5fd',
-  image:          '#fda4af',
-  cron:           '#818cf8',
-  memory_search:  '#67e8f9',
-  // PascalCase keys (Claude Code style)
-  Bash:           '#fbbf24',
-  Read:           '#34d399',
-  Write:          '#a78bfa',
-  Edit:           '#22d3ee',
-  Glob:           '#a3e635',
-  Grep:           '#bef264',
-  Agent:          '#f472b6',
-  Task:           '#818cf8',
-  WebFetch:       '#fb923c',
-  WebSearch:      '#fdba74',
-  TodoWrite:      '#c4b5fd',
-  NotebookEdit:   '#fda4af',
-};
-const LLM_COLOR   = '#6b7280';
 const LLM_COLOR_L = 'rgba(107,114,128,0.35)';
-
-function toolColor(name: string): string {
-  return TOOL_COLORS[name] ?? '#6b7280';
-}
 
 /* ── stop-reason pill ──
  * pi-ai (mariozechner/pi-ai) StopReason: "stop" | "length" | "toolUse" | "error" | "aborted"
@@ -244,6 +207,7 @@ interface MessageContent {
 }
 
 interface TurnRowProps {
+  toolStyles: ReadonlyMap<string, ToolStyle>;
   turn: TurnSlice;
   duration: number;
   sessionId: string;
@@ -254,7 +218,7 @@ interface TurnRowProps {
   onToggle: () => void;
 }
 
-function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighlighted, hideUserPrompt, onToggle }: TurnRowProps) {
+function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighlighted, hideUserPrompt, onToggle, toolStyles }: TurnRowProps) {
   const { t } = useTranslation();
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -358,10 +322,10 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                 width: wPct(Math.max(tc.duration_ms, 50), duration),
                 height: LANE_H,
                 top: maxLanes > 1 ? tc.lane * (LANE_H + 2) : undefined,
-                background: !tc.success ? '#ef4444' : toolColor(tc.tool_name),
+                ...toolStyles.get(tc.tool_name),
                 borderRadius: 3,
                 zIndex: 2,
-                boxShadow: !tc.success ? '0 0 0 1px #ef4444' : 'none',
+                boxShadow: !tc.success ? `0 0 0 2px ${ERROR_COLOR}` : 'none',
               }}
             />
           ))}
@@ -521,7 +485,7 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                 <div key={tc.id} style={{
                   background: 'rgba(0,0,0,0.22)',
                   border: `1px solid ${tc.success ? 'rgba(255,255,255,0.07)' : 'rgba(239,68,68,0.35)'}`,
-                  borderLeft: `3px solid ${tc.success ? toolColor(tc.tool_name) : '#ef4444'}`,
+                  borderLeft: `3px solid ${tc.success ? toolStyles.get(tc.tool_name)?.backgroundColor : ERROR_COLOR}`,
                   borderRadius: 4,
                   padding: '8px 10px',
                 }}>
@@ -938,7 +902,7 @@ function UserRunHeader({
   );
 }
 
-function Legend({ toolNames }: { toolNames: string[] }) {
+function Legend({ toolNames, toolStyles }: { toolNames: string[]; toolStyles: ReadonlyMap<string, ToolStyle> }) {
   const { t } = useTranslation();
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
@@ -949,12 +913,12 @@ function Legend({ toolNames }: { toolNames: string[] }) {
       </div>
       {toolNames.map(name => (
         <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <div style={{ width: 10, height: 10, borderRadius: 2, background: toolColor(name), flexShrink: 0 }} />
+          <div style={{ width: 10, height: 10, borderRadius: 2, ...toolStyles.get(name), flexShrink: 0 }} />
           <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--font-m)' }}>{name}</span>
         </div>
       ))}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <div style={{ width: 10, height: 10, borderRadius: 2, background: '#ef4444', flexShrink: 0 }} />
+        <div style={{ width: 10, height: 10, borderRadius: 2, background: 'transparent', boxShadow: `0 0 0 2px ${ERROR_COLOR}`, flexShrink: 0 }} />
         <span style={{ fontSize: 11, color: 'var(--muted)' }}>{t('sessionTimeline.legendError')}</span>
       </div>
     </div>
@@ -998,6 +962,10 @@ export default function SessionTimeline() {
 
   const url = selectedSession ? `/api/debug/session/${selectedSession}/timeline` : '';
   const { data: timeline, loading } = useFetch<TimelineData>(url, [selectedSession]);
+
+  const toolStyles = useMemo(() => createToolStyles(timeline
+    ? [...timeline.tool_names, ...timeline.turns.flatMap(turn => turn.tool_calls.map(tc => tc.tool_name))]
+    : []), [timeline]);
 
   // Scroll to the User Turn group container when navigating from Deep Turns
   useEffect(() => {
@@ -1144,7 +1112,7 @@ export default function SessionTimeline() {
 
             {/* Legend then stop reason — stacked left */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, marginBottom: 'var(--space-3)' }}>
-              <Legend toolNames={timeline.tool_names} />
+              <Legend toolNames={[...toolStyles.keys()]} toolStyles={toolStyles} />
               <InfoTooltip width={340} label={t('sessionTimeline.stopReasonTooltipLabel')} placement="bottom">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
@@ -1231,6 +1199,7 @@ export default function SessionTimeline() {
                             {group.turns.map((turn, turnIdx) => (
                               <TurnRow
                                 key={turn.seq}
+                                toolStyles={toolStyles}
                                 turn={turn}
                                 duration={timeline.duration_ms}
                                 sessionId={selectedSession}

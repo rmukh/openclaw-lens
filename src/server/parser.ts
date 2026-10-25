@@ -124,7 +124,7 @@ export async function findSessionFiles(clawHome?: string): Promise<string[]> {
     path.join(base, 'agents', '**', 'sessions', '*.jsonl.deleted.*'),
     path.join(base, 'agents', '**', 'sessions', '*.jsonl.reset.*'),
   ];
-  const results = await Promise.all(patterns.map(p => glob(p, { nodir: true })));
+  const results = await Promise.all(patterns.map(p => glob(p, { nodir: true, windowsPathsNoEscape: true })));
   // Deduplicate by session ID (prefer active .jsonl over archived)
   const byId = new Map<string, string>();
   for (const files of results) {

@@ -80,11 +80,11 @@ claw-lens 就是在这个背景下做的。对 agent 来说，最该盯的不是
 - **Token 用量** — 四维成本拆解（input、output、cache read、cache write），支持按 agent、模型、时间段看；缓存命中率；定时任务和手动任务的成本对比
 - **智能体** — 每个 agent 的统计数据、花费、session 数，以及 agent 的记忆文件
 - **实时监控** — 实时 agent 活动流，通过 WebSocket 接 OpenClaw Gateway
-- **会话** — session 列表，可以按 agent、模型、日期、成本筛选；带上下文健康度标识；每个 session 都能展开看完整的 tool call 链路
+- **会话** — session 列表，可以按 agent、模型、日期、成本筛选；除已有排序外，还支持按最后活跃时间、开始时间、持续时间和每条消息的平均 token 数升序或降序排列；带上下文健康度标识；每个 session 都能展开看完整的 tool call 链路
 - **定时任务** — 定时任务列表、历次运行记录、状态和成本
 - **记忆** — 查看所有 agent 的工作区和记忆文件
 - **安全审计** — 安全事件时间线，用规则做风险评分（高/中/低），覆盖文件访问、shell 命令、外部 HTTP 请求、敏感数据检测（34 种正则）、提示词注入检测（9 种模式），还有基于 30 天行为基线的异常检测
-- **时间线** — 单个 session 的逐轮消息回放，带 token 数、停止原因、tool call 详情
+- **时间线** — 单个 session 的逐轮消息回放，带 token 数、停止原因、tool call 详情；按当前会话的工具集合分配感知差异较大的颜色，支持自定义工具；工具种类较多时增加条纹，失败调用用红色边框标记
 - **性能分析** — 按 token 消耗给 session 排名，工具耗时分析
 - **深度轮次** — 发现深层轮次里的重复 tool 调用模式，带唯一性评分和按 agent 分组
 - **上下文拆解** — 逐轮上下文窗口占用图，拆成 system / history / tool-result 三块，刻度精确到模型的真实容量上限
@@ -125,6 +125,17 @@ npm run dev
 ```
 
 后端（Express + ts-node-dev，端口 4242）和前端（React + Vite，端口 6060）同时跑，改了 `src/server/` 或 `src/ui/` 下的代码马上生效。
+
+运行 `npm run dev:local` 可使用独立的开发数据库。前端地址为
+<http://localhost:6060>，API 地址为 <http://localhost:4242>。该模式读取本地
+OpenClaw 会话，将数据库保存到 `.dev/claw-lens.db`，与已安装仪表盘的数据库分开。
+
+运行 `npm run dev:demo` 可用四个模拟会话体验时间线配色和会话排序，包括自定义工具名
+和失败的工具调用。模拟日志保存在 `.dev/demo-openclaw/`，数据库保存在
+`.dev/demo.db`。该模式不会执行工具，也不会修改本地 OpenClaw 安装。
+
+两个命令均支持热更新。切换模式前请按 Ctrl+C 停止当前开发服务，因为它们使用相同端口。
+运行 `npm test` 可检查配色、会话排序及会话日志文件发现的回归测试。
 
 → [claw-lens.com/development](https://claw-lens.com/development)
 

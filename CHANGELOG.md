@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Session-specific timeline palettes that maximize perceptual color separation, including custom tools. Crowded palettes gain stripe patterns, and failed calls retain their tool color with a red outline.
+- Ascending and descending session sorting by last activity, start time, duration, and average tokens per message, alongside existing sort options. Sorting also applies when searching by session ID.
+- Cross-platform development commands: `npm run dev:local` uses a separate development database; `npm run dev:demo` provides four synthetic sessions with custom tools and failures.
+- Regression checks for tool palettes, session sorting, and session-file discovery, available through `npm test`.
+
+### Fixed
+
+- Discover OpenClaw session logs on Windows by treating backslashes as path separators in glob patterns.
+
 ## v0.1.0
 
 Initial release. claw-lens combines observability, analytics, and developer tooling for OpenClaw agents — cost tracking, session inspection, profiler, cache trace, and security audit in one local dashboard at `http://localhost:4242`.
