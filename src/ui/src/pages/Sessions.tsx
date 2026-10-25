@@ -12,7 +12,6 @@ import type { SessionSortField, SortDirection } from '../lib/session-sort';
 import { localDateInput, sessionDateRange } from '../lib/session-date-range';
 import type { SessionTimeFilter } from '../lib/session-date-range';
 
-const ACTIVE_SESSION_THRESHOLD_MS = 10 * 60 * 1_000;
 const COPIED_FEEDBACK_MS = 1_500;
 
 interface Session {
@@ -25,6 +24,10 @@ interface Session {
   last_message_at: number | null;
   cache_read: number; cache_write: number; input_tokens: number;
   last_stop_reason: string | null;
+  activity: {
+    state: 'in_progress' | 'idle' | 'unknown';
+    reason: 'turn_closed' | 'pending_reply' | 'tool_use' | 'stale' | 'unavailable';
+  };
   is_cron: number; cron_task: string | null; task_summary: string | null;
   // enriched fields
   contextUsed: number; contextLimit: number; utilizationPct: number;
@@ -175,8 +178,12 @@ export default function Sessions() {
   if (agentFilter) sessQs.set('agent', agentFilter);
   if (dateRange.from !== undefined) sessQs.set('from', String(dateRange.from));
   if (dateRange.to !== undefined) sessQs.set('to', String(dateRange.to));
-  const { data: sessions, loading, error: sessionsError } = useFetch<Session[]>(
+  const { data: sessions, loading, error: sessionsError, refresh: refreshSessions } = useFetch<Session[]>(
     dateRange.error ? '' : `/api/sessions?${sessQs}`, [agentFilter, timeFilter, customStart, customEnd]);
+  useEffect(() => {
+    window.addEventListener('claw-lens:data-updated', refreshSessions);
+    return () => window.removeEventListener('claw-lens:data-updated', refreshSessions);
+  }, [refreshSessions]);
   const { data: statsData } = useFetch<{ agents: string[] }>('/api/stats');
   const { data: detail } = useFetch<SessionDetail | null>(
     selected ? `/api/sessions/${selected}` : '',
@@ -224,7 +231,7 @@ export default function Sessions() {
     const d7 = now - 7 * 86400000;
     const d30 = now - 30 * 86400000;
     const totalSessions = filtered.length;
-    const activeNow = filtered.filter(s => s.last_message_at && (now - s.last_message_at) < ACTIVE_SESSION_THRESHOLD_MS).length;
+    const activeNow = filtered.filter(s => s.activity?.state === 'in_progress').length;
     const activeTs = (s: Session) => s.last_message_at ?? s.started_at;
     const errorsToday = filtered.filter(s => s.error_count > 0 && activeTs(s) >= todayMidnight.getTime()).length;
     const errors7d = filtered.filter(s => s.error_count > 0 && activeTs(s) >= d7).length;
@@ -310,7 +317,7 @@ export default function Sessions() {
       {/* ── KPI Strip ── */}
       <KpiStrip cols={5} style={{ marginTop: 'var(--space-4)' }}>
         <Kpi value={kpis.totalSessions} label={t('sessions.totalSessions')} />
-        <Kpi value={kpis.activeNow} label={t('sessions.activeNow')} color={kpis.activeNow > 0 ? 'var(--C-green)' : undefined} />
+        <Kpi value={kpis.activeNow} label={t('sessions.activeNow')} tooltip={t('sessions.activityHint')} color={kpis.activeNow > 0 ? 'var(--C-green)' : undefined} />
         <Kpi value={kpis.errorsToday} label={t('sessions.errorsToday')} color={kpis.errorsToday > 0 ? 'var(--C-rose)' : undefined} />
         <Kpi value={kpis.errors7d} label={t('sessions.errors7d')} color={kpis.errors7d > 0 ? 'var(--C-rose)' : undefined} />
         <Kpi value={kpis.errors30d} label={t('sessions.errors30d')} color={kpis.errors30d > 0 ? 'var(--C-rose)' : undefined} />
@@ -404,7 +411,7 @@ export default function Sessions() {
                   <th style={TH_STYLE}>{t('common.session')}</th>
                   <th style={TH_STYLE}>{t('common.agent')}</th>
                   <th style={TH_STYLE}>{t('sessions.workspaceRun')}</th>
-                  <th style={TH_STYLE}>{t('sessions.liveStatus')}</th>
+                  <th style={TH_STYLE} title={t('sessions.activityHint')}>{t('sessions.liveStatus')}</th>
                   <th style={TH_STYLE}>{t('common.model')}</th>
                   <th style={TH_STYLE}>{t('common.tokens')}</th>
                   <th style={TH_STYLE}>{t('common.cost')}</th>
@@ -524,17 +531,17 @@ export default function Sessions() {
                       </td>
                       <td style={TD_STYLE}>
                         {(() => {
-                          const IDLE_THRESHOLD = 30 * 60 * 1000;
-                          const lastTs = s.last_message_at ?? s.started_at;
-                          const isRunning = (Date.now() - lastTs) < IDLE_THRESHOLD;
+                          const state = s.activity?.state || 'unknown';
+                          const reason = s.activity?.reason || 'unavailable';
+                          const color = state === 'in_progress' ? '#22c55e' : state === 'idle' ? '#60a5fa' : '#eab308';
                           return (
-                            <span style={{
+                            <span title={t('sessions.activityReason_' + reason)} style={{
                               fontSize: 11, padding: '1px 6px', borderRadius: 9, fontWeight: 500,
-                              background: isRunning ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)',
-                              color: isRunning ? '#22c55e' : '#60a5fa',
+                              background: state === 'in_progress' ? 'rgba(34,197,94,0.15)' : state === 'idle' ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
+                              color,
                               whiteSpace: 'nowrap',
                             }}>
-                              {isRunning ? t('common.running') : t('common.idle')}
+                              {state === 'idle' ? t('common.idle') : t('sessions.activity_' + state)}
                             </span>
                           );
                         })()}

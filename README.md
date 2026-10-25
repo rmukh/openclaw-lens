@@ -103,6 +103,18 @@ In Sessions, choose the sort field in the dropdown and click the adjacent arrow
 button to switch between ↑ ascending and ↓ descending. Direction applies to every
 field. Last active is the default and includes the former Newest sort behavior.
 
+The activity badge describes the latest recorded turn. A final `stop`, `error`,
+`aborted`, or `length` response becomes **Idle** immediately after ingestion.
+Recent user messages awaiting a reply and unfinished tool turns show **In progress**
+(inferred from logs). After ten minutes without updates, unfinished turns show
+**Unknown**, rather than assuming completion. Hover over the badge for its reason.
+**Active now** counts these inferred in-progress turns. Live log updates refresh
+the table, with periodic polling as a fallback.
+
+This tracks turn activity, not TUI process lifetime: `/exit` can close a TUI
+without writing a session exit record, and a gateway run may continue afterward.
+Direct OpenClaw launches therefore do not claim an **Exited** status.
+
 Select **Custom range** in the time filter to choose start and end dates, shown
 as two calendar inputs separated by `-`. Both dates are included in your local
 timezone. Sessions appear when they have any message in that interval, even if

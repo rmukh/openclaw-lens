@@ -20,6 +20,8 @@ export function useHumanInLoopNotifier() {
     let lastChimeAt = 0;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let audioCtx: AudioContext | null = null;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     function getCtx(): AudioContext | null {
       try {
@@ -86,16 +88,20 @@ export function useHumanInLoopNotifier() {
     function connect() {
       if (stopped) return;
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${window.location.host}/ws/live`);
+      const ws = socket = new WebSocket(`${proto}://${window.location.host}/ws/live`);
 
       ws.onmessage = (e) => {
+        if (stopped) return;
         try {
           const msg = JSON.parse(e.data as string) as { type?: string };
-          if (msg.type === 'data_updated') onActivity();
+          if (msg.type === 'data_updated') {
+            onActivity();
+            window.dispatchEvent(new Event('claw-lens:data-updated'));
+          }
         } catch { /* ignore */ }
       };
 
-      ws.onclose = () => { if (!stopped) setTimeout(connect, 3_000); };
+      ws.onclose = () => { if (!stopped) reconnectTimer = setTimeout(connect, 3_000); };
       ws.onerror = () => {};
     }
 
@@ -104,6 +110,8 @@ export function useHumanInLoopNotifier() {
     return () => {
       stopped = true;
       if (idleTimer) clearTimeout(idleTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socket?.close();
       audioCtx?.close().catch(() => {});
     };
   }, []);

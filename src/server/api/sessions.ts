@@ -7,6 +7,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createSessionIdentityResolver } from '../session-identity';
 import type { SessionIdentitySource } from '../session-identity';
+import { sessionActivity } from '../session-activity';
+import type { ActivityMessage } from '../session-activity';
 
 export function sessionsRouter(db: Database.Database, metadataHome?: string): Router {
   const r = Router();
@@ -93,7 +95,9 @@ export function sessionsRouter(db: Database.Database, metadataHome?: string): Ro
         ${crExpr} AS cache_read,
         ${cwExpr} AS cache_write,
         ${inpExpr} AS input_tokens,
-        (SELECT m3.stop_reason FROM messages m3 WHERE m3.session_id = s.id AND m3.role = 'assistant' ORDER BY m3.timestamp DESC LIMIT 1) AS last_stop_reason
+        (SELECT m3.stop_reason FROM messages m3 WHERE m3.session_id = s.id AND m3.role = 'assistant'
+          AND COALESCE(m3.model, '') NOT IN ('delivery-mirror', 'gateway-injected')
+          ORDER BY m3.timestamp DESC, m3.rowid DESC LIMIT 1) AS last_stop_reason
       FROM sessions s${where}
       ORDER BY s.started_at DESC
     `).all(...queryParams) as Array<Record<string, unknown>>;
@@ -117,7 +121,17 @@ export function sessionsRouter(db: Database.Database, metadataHome?: string): Ro
     `);
 
     const identify = createSessionIdentityResolver(metadataHome);
+    const activityStmt = db.prepare(`
+      SELECT role, stop_reason, timestamp,
+        (SELECT MAX(timestamp) FROM tool_calls WHERE session_id = ?) AS last_tool_at
+      FROM messages WHERE session_id = ? AND role IN ('user', 'assistant')
+        AND COALESCE(model, '') NOT IN ('delivery-mirror', 'gateway-injected')
+      ORDER BY timestamp DESC, rowid DESC LIMIT 1
+    `);
+    const now = Date.now();
     const enriched = rows.map(row => {
+      const latest = activityStmt.get(row.id, row.id) as (ActivityMessage & { last_tool_at: number | null }) | undefined;
+      const activity = sessionActivity(latest ?? null, latest?.last_tool_at ?? null, now);
       const model = (row.primary_model as string) || '';
       const contextLimit = getContextLimit(model);
       const lastMsg = lastMsgStmt.get(row.id) as { input_tokens: number; cache_read: number; cache_write: number; timestamp: number } | undefined;
@@ -141,7 +155,7 @@ export function sessionsRouter(db: Database.Database, metadataHome?: string): Ro
       let status = 'ok';
       if ((row.error_count as number) > 0) status = 'error';
 
-      return { ...row, ...identify(row as unknown as SessionIdentitySource), contextUsed, contextLimit, utilizationPct, pacing, burnTokensPerMin, status };
+      return { ...row, ...identify(row as unknown as SessionIdentitySource), activity, contextUsed, contextLimit, utilizationPct, pacing, burnTokensPerMin, status };
     });
 
     res.json(enriched);

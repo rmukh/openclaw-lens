@@ -17,6 +17,8 @@
 
 ### Fixed
 
+- Derive Sessions activity from the latest real message and tool activity instead of labelling every recently updated session as Running. Closed turns become Idle, unfinished recent turns show In progress, and stale/ambiguous turns show Unknown. Refresh statuses on live log updates and keep Active now consistent with the badges.
+- Preserve the browser's HTTP origin through the development WebSocket proxy so live updates pass the server's localhost origin check.
 - Count all sessions contributing tokens within a breakdown range, including sessions with later activity outside that range; avoid displaying unrelated summary data while a breakdown is loading or invalid.
 - Eliminate the execution Gantt's horizontal overflow by reserving space for turn durations, keeping endpoint ticks inside the plot, and adapting the chart to narrow widths.
 - Keep a single pending gateway reconnect when offline, preventing exponential retry growth and excessive memory use.
