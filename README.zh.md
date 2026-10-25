@@ -94,6 +94,9 @@ claw-lens 就是在这个背景下做的。对 agent 来说，最该盯的不是
 
 详细的逐页功能说明：**[claw-lens.com/monitoring/overview](https://claw-lens.com/monitoring/overview)**
 
+在会话列表中，第一个排序下拉框选择字段，第二个选择方向：↑ 为升序，↓ 为降序。
+所有字段都支持两个方向。默认按最后活跃时间降序排列，与原来的“最新”排序一致。
+
 ---
 
 ## 快速开始

@@ -5,7 +5,7 @@
 ### Added
 
 - Session-specific timeline palettes that maximize perceptual color separation, including custom tools. Crowded palettes gain stripe patterns, and failed calls retain their tool color with a red outline.
-- Ascending and descending session sorting by last activity, start time, duration, and average tokens per message, alongside existing sort options. Sorting also applies when searching by session ID.
+- Separate dropdowns for session sort field and direction (↑ ascending, ↓ descending). All fields support both directions, including last activity, start time, duration, average tokens per message, tokens, cost, errors, and cache hit rate. Sorting also applies when searching by session ID.
 - Cross-platform development commands: `npm run dev:local` uses a separate development database; `npm run dev:demo` provides four synthetic sessions with custom tools and failures.
 - Regression checks for tool palettes, session sorting, and session-file discovery, available through `npm test`.
 

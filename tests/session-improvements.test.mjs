@@ -70,15 +70,23 @@ const rows = [
 ];
 for (const [key, expected] of Object.entries({ last_active: ['b','c','a'], started: ['a','b','c'], duration: ['c','b','a'], avg_per_msg: ['c','a','b'] })) {
   test(`${key} sorts ascending and descending by the actual numeric value`, () => {
-    assert.deepEqual(sortSessions(rows, `${key}_asc`).map(s => s.id), expected);
-    assert.deepEqual(sortSessions(rows, `${key}_desc`).map(s => s.id), [...expected].reverse());
+    assert.deepEqual(sortSessions(rows, key, 'asc').map(s => s.id), expected);
+    assert.deepEqual(sortSessions(rows, key, 'desc').map(s => s.id), [...expected].reverse());
     assert.deepEqual(rows.map(s => s.id), ['a','b','c']);
   });
 }
 test('existing sorts and deterministic tie breaking are preserved', () => {
-  for (const [key, expected] of Object.entries({ newest: ['a','c','b'], tokens: ['a','b','c'], cost: ['b','a','c'], errors: ['c','a','b'], cache_hit_asc: ['a','c','b'] })) {
-    assert.deepEqual(sortSessions(rows, key).map(s => s.id), expected);
+  for (const [key, expected] of Object.entries({ last_active: ['a','c','b'], tokens: ['a','b','c'], cost: ['b','a','c'], errors: ['c','a','b'], cache_hit: ['b','c','a'] })) {
+    assert.deepEqual(sortSessions(rows, key, 'desc').map(s => s.id), expected);
   }
-  assert.deepEqual(sortSessions([{ ...base, id: 'b' }, { ...base, id: 'a' }], 'duration_desc').map(s => s.id), ['a','b']);
-  assert.deepEqual(sortSessions([], 'avg_per_msg_desc'), []);
+  assert.deepEqual(sortSessions([{ ...base, id: 'b' }, { ...base, id: 'a' }], 'duration', 'desc').map(s => s.id), ['a','b']);
+  assert.deepEqual(sortSessions([], 'avg_per_msg', 'desc'), []);
+});
+
+test('every sort field supports reversing direction independently', () => {
+  for (const field of ['last_active', 'started', 'duration', 'avg_per_msg', 'tokens', 'cost', 'errors', 'cache_hit']) {
+    const ascending = sortSessions(rows, field, 'asc').map(s => s.id);
+    const descending = sortSessions(rows, field, 'desc').map(s => s.id);
+    assert.deepEqual(ascending, [...descending].reverse());
+  }
 });

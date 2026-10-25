@@ -8,6 +8,7 @@ import {
 } from '../components/ui';
 
 import { averageTokens, sortSessions } from '../lib/session-sort';
+import type { SessionSortField, SortDirection } from '../lib/session-sort';
 
 const ACTIVE_SESSION_THRESHOLD_MS = 10 * 60 * 1_000;
 const COPIED_FEEDBACK_MS = 1_500;
@@ -72,7 +73,8 @@ export default function Sessions() {
   const shouldAutoScroll = useRef(false);
   const [agentFilter, setAgentFilter] = useState(() => searchParams.get('agent') || '');
   const [timeFilter, setTimeFilter] = useState('all');
-  const [sortBy, setSortBy] = useState('newest');
+  const [sortBy, setSortBy] = useState<SessionSortField>('last_active');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [cronFilter, setCronFilter] = useState('all');
   const [sessionIdFilter, setSessionIdFilter] = useState('');
   const [detailTab, setDetailTab] = useState<'overview' | 'messages'>('overview');
@@ -193,8 +195,8 @@ export default function Sessions() {
       if (cronFilter === 'cron') list = list.filter(s => s.is_cron);
       else if (cronFilter === 'non-cron') list = list.filter(s => !s.is_cron);
     }
-    return sortSessions(list, sortBy);
-  }, [sessions, agentFilter, cronFilter, sortBy, sessionIdFilter]);
+    return sortSessions(list, sortBy, sortDirection);
+  }, [sessions, agentFilter, cronFilter, sortBy, sortDirection, sessionIdFilter]);
 
   // ── KPI computations (derived from filtered list so all filters apply) ──
   const kpis = useMemo(() => {
@@ -321,24 +323,23 @@ export default function Sessions() {
           <option value="non-cron">{t('sessions.nonCron')}</option>
         </select>
         <span style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 var(--space-1)' }} />
-        <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
-          <option value="newest">{t('sessions.sortNewest')}</option>
-          <option value="last_active_desc">{t('sessions.sortLastActiveDesc')}</option>
-          <option value="last_active_asc">{t('sessions.sortLastActiveAsc')}</option>
-          <option value="started_desc">{t('sessions.sortStartedDesc')}</option>
-          <option value="started_asc">{t('sessions.sortStartedAsc')}</option>
-          <option value="duration_desc">{t('sessions.sortDurationDesc')}</option>
-          <option value="duration_asc">{t('sessions.sortDurationAsc')}</option>
-          <option value="avg_per_msg_desc">{t('sessions.sortAvgPerMsgDesc')}</option>
-          <option value="avg_per_msg_asc">{t('sessions.sortAvgPerMsgAsc')}</option>
+        <select aria-label={t('sessions.sortField')} value={sortBy} onChange={e => setSortBy(e.target.value as SessionSortField)}>
+          <option value="last_active">{t('sessions.sortLastActive')}</option>
+          <option value="started">{t('sessions.sortStarted')}</option>
+          <option value="duration">{t('sessions.sortDuration')}</option>
+          <option value="avg_per_msg">{t('sessions.sortAvgPerMsg')}</option>
           <option value="tokens">{t('sessions.sortTokens')}</option>
           <option value="cost">{t('sessions.sortCost')}</option>
           <option value="errors">{t('sessions.sortErrors')}</option>
-          <option value="cache_hit_asc">{t('sessions.sortCacheHit')}</option>
+          <option value="cache_hit">{t('sessions.sortCacheHit')}</option>
         </select>
-        {(agentFilter || cronFilter !== 'all' || timeFilter !== 'all' || sortBy !== 'newest' || sessionIdFilter) && (
+        <select aria-label={t('sessions.sortDirection')} value={sortDirection} onChange={e => setSortDirection(e.target.value as SortDirection)} title={t(sortDirection === 'asc' ? 'sessions.sortAscending' : 'sessions.sortDescending')}>
+          <option value="asc" aria-label={t('sessions.sortAscending')}>↑</option>
+          <option value="desc" aria-label={t('sessions.sortDescending')}>↓</option>
+        </select>
+        {(agentFilter || cronFilter !== 'all' || timeFilter !== 'all' || sortBy !== 'last_active' || sortDirection !== 'desc' || sessionIdFilter) && (
           <button
-            onClick={() => { setAgentFilter(''); setTimeFilter('all'); setCronFilter('all'); setSortBy('newest'); setSessionIdFilter(''); }}
+            onClick={() => { setAgentFilter(''); setTimeFilter('all'); setCronFilter('all'); setSortBy('last_active'); setSortDirection('desc'); setSessionIdFilter(''); }}
             style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--muted)', padding: 'var(--space-1) var(--space-2)', cursor: 'pointer', fontSize: 12, letterSpacing: '.08em', textTransform: 'uppercase' }}
           >
             {t('common.clear')}
