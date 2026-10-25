@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- Refresh session, message, and tool timestamps when changed transcripts are re-ingested, so restarting demos updates date-filtered usage in an existing database.
+- Generate demo sessions with current token-bearing final replies, including immediately after midnight on Monday, and keep all demo timestamps at or before startup time.
 - Use full recorded history for All Time in both token sections, and apply consistent validated range bounds and billable-message filters to agent totals and expanded sessions.
 - Derive Sessions activity from the latest real message and tool activity instead of labelling every recently updated session as Running. Closed turns become Idle, unfinished recent turns show In progress, and stale/ambiguous turns show Unknown. Refresh statuses on live log updates and keep Active now consistent with the badges.
 - Preserve the browser's HTTP origin through the development WebSocket proxy so live updates pass the server's localhost origin check.

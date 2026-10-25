@@ -354,6 +354,7 @@ function ingestSession(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       agent_name = excluded.agent_name,
+      started_at = excluded.started_at,
       ended_at = excluded.ended_at,
       total_messages = excluded.total_messages,
       total_cost = excluded.total_cost,
@@ -375,6 +376,7 @@ function ingestSession(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       agent_name = excluded.agent_name,
+      timestamp = excluded.timestamp,
       input_tokens = excluded.input_tokens,
       output_tokens = excluded.output_tokens,
       cache_read = excluded.cache_read,
@@ -397,6 +399,7 @@ function ingestSession(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id, message_id) DO UPDATE SET
       agent_name = excluded.agent_name,
+      timestamp = excluded.timestamp,
       arguments = excluded.arguments,
       duration_ms = excluded.duration_ms,
       success = excluded.success

@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /** Synthetic OpenClaw logs for repeatable UI debugging; no tools are executed. */
-export function createDemoData(dataDir: string): string {
+export function createDemoData(dataDir: string, now = Date.now()): string {
   const home = path.join(dataDir, 'demo-openclaw');
   const stores = new Map<string, Record<string, unknown>>();
   const agents = ['workspace-1', 'workspace-2', 'demo'];
@@ -12,7 +12,6 @@ export function createDemoData(dataDir: string): string {
   })) } }, null, 2));
   const tools = ['exec', 'process', 'read', 'web_search', 'web_fetch',
     'custom.search_documents', 'custom.render_report', 'write', 'edit'];
-  const now = Date.now();
   for (let session = 0; session < 4; session++) {
     const id = `00000000-0000-4000-8000-${String(session + 1).padStart(12, '0')}`;
     const agent = ['workspace-1', 'workspace-1', 'workspace-2', 'demo'][session];
@@ -21,9 +20,13 @@ export function createDemoData(dataDir: string): string {
     // Remove only our old generated transcript when moving a demo to its new agent.
     const oldFile = path.join(home, 'agents', 'demo', 'sessions', `${id}.jsonl`);
     if (agent !== 'demo' && fs.existsSync(oldFile)) fs.unlinkSync(oldFile);
-    const start = now - (4 - session) * 3_600_000;
     // The oldest session is most recently active; duration and avg/msg differ too.
     const step = [1_600_000, 25_000, 120_000, 12_000][session];
+    const sessionTools = session === 0 ? tools : tools.slice(0, session + 2);
+    // Include current billable activity even just after midnight on Monday.
+    // Anchor the end first so no generated message is in the future.
+    const end = session === 0 || session === 3 ? now : now - (4 - session) * 3_600_000;
+    const start = end - (sessionTools.length * step + 10000);
     const tokens = [1000, 20000, 4000, 8000][session];
     const records: unknown[] = [];
     if (agent !== 'demo') {
@@ -43,7 +46,6 @@ export function createDemoData(dataDir: string): string {
       parentId = messageId;
     };
     add('user', start, { role: 'user', content: [{ type: 'text', text: 'Demo: inspect tools, custom functions, and session sorting.' }] });
-    const sessionTools = session === 0 ? tools : tools.slice(0, session + 2);
     sessionTools.forEach((name, i) => {
       const timestamp = start + 1000 + i * step;
       const toolId = `${id}-call-${i}`;
@@ -57,7 +59,9 @@ export function createDemoData(dataDir: string): string {
         content: [{ type: 'text', text: i === 2 ? 'Simulated tool failure for debugging.' : 'Simulated result; no tool was executed.' }],
       });
     });
-    add('done', start + sessionTools.length * step + 10000, { role: 'assistant', model: 'demo-model',
+    add('done', end, { role: 'assistant', model: 'demo-model',
+      usage: { input: tokens, output: 100, totalTokens: tokens + 100, cacheRead: 0, cacheWrite: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: 'stop', content: [{ type: 'text', text: 'Demo session complete.' }] });
     fs.writeFileSync(path.join(sessions, `${id}.jsonl`), records.map(r => JSON.stringify(r)).join('\n') + '\n');
   }

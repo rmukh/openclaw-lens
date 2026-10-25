@@ -190,6 +190,9 @@ synthetic sessions across two workspaces, including named runs, a legacy session
 without metadata, custom tool names, and failed tool calls. Demo
 logs are stored in `.dev/demo-openclaw/` and their database in `.dev/demo.db`.
 This mode never executes tools or modifies your OpenClaw installation.
+Demo timestamps are generated at startup, with current token usage included even
+just after midnight. Restart the demo to refresh its dates. A demo left running
+overnight can have no usage in Today or This Week after the calendar rolls over.
 
 Both commands support hot reload. Stop the current development server with
 Ctrl+C before switching modes, since they use the same ports. Run `npm test`
