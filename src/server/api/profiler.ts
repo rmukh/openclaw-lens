@@ -2,6 +2,19 @@ import { Router, Request, Response } from 'express';
 import Database from 'better-sqlite3';
 import * as crypto from 'crypto';
 
+function tokenWindow(req: Request, res: Response): { from?: number; to?: number } | null {
+  const timestamp = (value: unknown) => value === undefined ? undefined
+    : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+  const from = timestamp(req.query.from);
+  const to = timestamp(req.query.to);
+  if ([from, to].some(value => value !== undefined && (!Number.isSafeInteger(value) || Math.abs(value) > 8.64e15))
+    || (from !== undefined && to !== undefined && from >= to)) {
+    res.status(400).json({ error: 'Invalid time range: from must be before to, using millisecond timestamps.' });
+    return null;
+  }
+  return { from, to };
+}
+
 export function profilerRouter(db: Database.Database): Router {
   const r = Router();
 
@@ -46,13 +59,14 @@ export function profilerRouter(db: Database.Database): Router {
 
   // GET /api/profiler/tokens — token consumption by agent (supports from/to filtering)
   r.get('/tokens', (req: Request, res: Response) => {
-    const from = req.query.from ? Number(req.query.from) : undefined;
-    const to = req.query.to ? Number(req.query.to) : undefined;
+    const window = tokenWindow(req, res);
+    if (!window) return;
+    const { from, to } = window;
 
-    let where = "WHERE role = 'assistant' AND model NOT IN ('delivery-mirror', 'gateway-injected')";
+    let where = "WHERE role = 'assistant' AND model NOT IN ('delivery-mirror', 'gateway-injected') AND cost_total >= 0";
     const params: number[] = [];
-    if (from) { where += ' AND timestamp >= ?'; params.push(from); }
-    if (to)   { where += ' AND timestamp < ?';  params.push(to); }
+    if (from !== undefined) { where += ' AND timestamp >= ?'; params.push(from); }
+    if (to !== undefined)   { where += ' AND timestamp < ?';  params.push(to); }
 
     const rows = db.prepare(`
       SELECT
@@ -82,13 +96,14 @@ export function profilerRouter(db: Database.Database): Router {
   // GET /api/profiler/tokens/:agent/sessions — top sessions by token for an agent
   r.get('/tokens/:agent/sessions', (req: Request, res: Response) => {
     const agent = req.params.agent;
-    const from = req.query.from ? Number(req.query.from) : undefined;
-    const to = req.query.to ? Number(req.query.to) : undefined;
+    const window = tokenWindow(req, res);
+    if (!window) return;
+    const { from, to } = window;
 
-    let where = "WHERE m.role = 'assistant' AND m.model NOT IN ('delivery-mirror', 'gateway-injected') AND m.agent_name = ?";
+    let where = "WHERE m.role = 'assistant' AND m.model NOT IN ('delivery-mirror', 'gateway-injected') AND m.cost_total >= 0 AND m.agent_name = ?";
     const params: (string | number)[] = [agent];
-    if (from) { where += ' AND m.timestamp >= ?'; params.push(from); }
-    if (to)   { where += ' AND m.timestamp < ?';  params.push(to); }
+    if (from !== undefined) { where += ' AND m.timestamp >= ?'; params.push(from); }
+    if (to !== undefined)   { where += ' AND m.timestamp < ?';  params.push(to); }
 
     const rows = db.prepare(`
       SELECT

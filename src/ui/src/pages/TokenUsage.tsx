@@ -1,4 +1,6 @@
-import { localDateInput, mondayStart, sessionDateRange } from '../lib/session-date-range';
+import { TokenPeriodPicker } from '../components/TokenPeriodPicker';
+import { useTokenPeriod } from '../lib/use-token-period';
+import { tokenPeriodQuery } from '../lib/token-period';
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -453,31 +455,9 @@ export default function TokenUsage() {
   const { data: data30d, loading, error: tokensError } = useFetch<TokenSummary>('/api/tokens/summary?days=30', []);
   const { data: dataAll } = useFetch<TokenSummary>('/api/tokens/summary?days=365', []);
 
-  // Breakdown has its own independent time filter (uses DateNavigator)
-  type BreakdownMode = 'preset' | 'day' | 'week' | 'this_week' | 'custom';
-  const [bdMode, setBdMode] = useState<BreakdownMode>('preset');
-  const [bdPreset, setBdPreset] = useState(7);
-  const bdToday = React.useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
-  // "day" mode: pick a single day (uses DateNavigator mode="hour" — calendar picker)
-  const [bdSingleDay, setBdSingleDay] = useState(bdToday);
-  // "week" mode: pick a 7-day window (uses DateNavigator mode="day" — week list picker)
-  const [bdWeekEnd, setBdWeekEnd] = useState(bdToday);
-
-  const [bdCustomStart, setBdCustomStart] = useState(() => localDateInput());
-  const [bdCustomEnd, setBdCustomEnd] = useState(() => localDateInput());
-  const currentMonday = mondayStart();
-  const bdRange = useMemo(() => {
-    if (bdMode === 'custom') return sessionDateRange('custom', bdCustomStart, bdCustomEnd);
-    if (bdMode === 'this_week') return { from: currentMonday };
-    if (bdMode === 'day') return sessionDateRange('custom', toDateStr(bdSingleDay), toDateStr(bdSingleDay));
-    if (bdMode === 'week') return sessionDateRange('custom', toDateStr(addDays(bdWeekEnd, -6)), toDateStr(bdWeekEnd));
-    return {};
-  }, [bdMode, bdCustomStart, bdCustomEnd, currentMonday, bdSingleDay, bdWeekEnd]);
-  const bdParams = new URLSearchParams();
-  if (bdMode === 'preset') bdParams.set('days', String(bdPreset));
-  if (bdRange.from !== undefined) bdParams.set('from', new Date(bdRange.from).toISOString());
-  if (bdRange.to !== undefined) bdParams.set('to', new Date(bdRange.to).toISOString());
-  const bdApiUrl = bdRange.error ? '' : `/api/tokens/summary?${bdParams}`;
+  const breakdownPeriod = useTokenPeriod();
+  const bdRange = breakdownPeriod.range;
+  const bdApiUrl = bdRange.error ? '' : '/api/tokens/summary' + tokenPeriodQuery(bdRange, 'iso');
   const { data: breakdownData, loading: breakdownLoading, error: breakdownError } = useFetch<TokenSummary>(bdApiUrl, [bdApiUrl]);
 
   if (loading && !data30d) return <Loading />;
@@ -545,37 +525,8 @@ export default function TokenUsage() {
 
       {/* ── Breakdown ── */}
       <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--text)', marginTop: 48 }}>{t('tokenUsage.breakdown')}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-3)', flexWrap: 'wrap' }}>
-        <Dropdown
-          ariaLabel={t('tokenUsage.breakdownPeriod')}
-          value={bdMode === 'preset' ? `p_${bdPreset}` : bdMode}
-          onChange={(v: string) => {
-            if (v.startsWith('p_')) { setBdMode('preset'); setBdPreset(Number(v.slice(2))); }
-            else if (v === 'day') { setBdMode('day'); setBdSingleDay(bdToday); }
-            else if (v === 'week') { setBdMode('week'); setBdWeekEnd(bdToday); }
-            else if (v === 'this_week' || v === 'custom') setBdMode(v);
-          }}
-          options={[
-            { label: t('tokenUsage.today'), value: 'p_1' },
-            { label: t('tokenUsage.thisWeek'), value: 'this_week' },
-            { label: t('tokenUsage.last7Days'), value: 'p_7' },
-            { label: t('tokenUsage.last30Days'), value: 'p_30' },
-            { label: t('tokenUsage.last90Days'), value: 'p_90' },
-            { label: t('tokenUsage.allTime'), value: 'p_365' },
-            { label: t('tokenUsage.byDay'), value: 'day' },
-            { label: t('tokenUsage.byWeek'), value: 'week' },
-            { label: t('sessions.customRange'), value: 'custom' },
-          ]}
-        />
-        {bdMode === 'custom' && (
-          <div role="group" aria-label={t('sessions.customRange')} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
-            <input type="date" aria-label={t('sessions.startDate')} value={bdCustomStart} max={bdCustomEnd || undefined} required aria-invalid={!!bdRange.error} aria-describedby={bdRange.error ? 'breakdown-date-error' : undefined} onChange={e => setBdCustomStart(e.target.value)} style={{ padding: '.35rem .55rem' }} />
-            <span aria-hidden="true" style={{ color: 'var(--muted)' }}>-</span>
-            <input type="date" aria-label={t('sessions.endDate')} value={bdCustomEnd} min={bdCustomStart || undefined} required aria-invalid={!!bdRange.error} aria-describedby={bdRange.error ? 'breakdown-date-error' : undefined} onChange={e => setBdCustomEnd(e.target.value)} style={{ padding: '.35rem .55rem' }} />
-          </div>
-        )}
-        {bdMode === 'day' && <DateNavigator mode="hour" value={bdSingleDay} onChange={setBdSingleDay} />}
-        {bdMode === 'week' && <DateNavigator mode="day" value={bdWeekEnd} onChange={setBdWeekEnd} />}
+      <div style={{ marginTop: 'var(--space-3)' }}>
+        <TokenPeriodPicker period={breakdownPeriod} ariaLabel={t('tokenUsage.breakdownPeriod')} errorId="breakdown-date-error" />
       </div>
 
       <div role="region" aria-label={t('tokenUsage.breakdown')}>
@@ -809,9 +760,9 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
-  const { data: topSessions } = useFetch<TokenAgentSession[]>(
+  const { data: topSessions, error: sessionsError } = useFetch<TokenAgentSession[]>(
     expanded ? `/api/profiler/tokens/${encodeURIComponent(agent.agent_name)}/sessions${timeQs}` : '',
-    [expanded],
+    [expanded, timeQs],
   );
 
   const color = AGENT_COLORS[colorIdx % AGENT_COLORS.length];
@@ -820,7 +771,7 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
     ? (agent.cache_read / (agent.cache_read + agent.input_tokens)) * 100 : 0;
 
   return (
-    <div style={{ borderBottom: '1px solid var(--border)' }}>
+    <div data-token-agent={agent.agent_name} style={{ borderBottom: '1px solid var(--border)' }}>
       {/* Collapsed row */}
       <div
         style={{
@@ -843,7 +794,7 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
           {fmtCost(agent.total_cost)}
         </div>
         <div style={{ height: 14, background: 'var(--surface2)', position: 'relative', overflow: 'hidden', borderRadius: 3 }}>
-          <div style={{ position: 'absolute', inset: 0, width: `${(agent.total_tokens / maxTokens) * 100}%`, background: color, borderRadius: 3 }} />
+          <div style={{ position: 'absolute', inset: 0, width: `${maxTokens > 0 ? (agent.total_tokens / maxTokens) * 100 : 0}%`, background: color, borderRadius: 3 }} />
         </div>
         <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
           {fmtPct(pct / 100, 0)}
@@ -894,11 +845,12 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
           </div>
 
           {/* Top sessions */}
+          {sessionsError && <AlertBanner variant="error">{sessionsError}</AlertBanner>}
           {topSessions && topSessions.length > 0 && (
             <div>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>{t('tokenUsage.topSessionsByToken')}</div>
               {topSessions.slice(0, 5).map(s => (
-                <div key={s.session_id}
+                <div key={s.session_id} data-token-session={s.session_id}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '3px 6px', cursor: 'pointer', borderRadius: 3 }}
                   onClick={() => navigate(`/sessions?q=${s.session_id}`)}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface2)')}
@@ -921,43 +873,23 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
 
 function TokenByAgent() {
   const { t } = useTranslation();
-  const [days, setDays] = useState(7);
-
-  const now = useMemo(() => Date.now(), [days]); // recalc when days changes
-  const fromTs = days >= 365 ? '' : String(now - days * 86400000);
-  const qs = fromTs ? `?from=${fromTs}` : '';
-
-  const { data: agents } = useFetch<TokenAgentRow[]>(`/api/profiler/tokens${qs}`, [days]);
-
-  if (!agents || agents.length === 0) return null;
-
-  const totalTokens = agents.reduce((s, a) => s + a.total_tokens, 0);
-  const maxTokens = agents[0]?.total_tokens ?? 1;
-
-  const timeOptions = [
-    { label: t('tokenUsage.today'), value: 1 },
-    { label: t('tokenUsage.last7Days'), value: 7 },
-    { label: t('tokenUsage.last30Days'), value: 30 },
-    { label: t('tokenUsage.last90Days'), value: 90 },
-    { label: t('tokenUsage.allTime'), value: 365 },
-  ];
+  const period = useTokenPeriod();
+  const qs = tokenPeriodQuery(period.range, 'timestamp');
+  const { data: agents, loading, error } = useFetch<TokenAgentRow[]>(
+    period.range.error ? '' : '/api/profiler/tokens' + qs, [qs]);
+  const totalTokens = (agents || []).reduce((sum, agent) => sum + agent.total_tokens, 0);
+  const maxTokens = agents?.[0]?.total_tokens ?? 1;
 
   return (
-    <div>
-      {/* Time filter */}
-      <div style={{ padding: '0 var(--space-4)', marginBottom: 'var(--space-3)', display: 'flex', gap: 6 }}>
-        {timeOptions.map(o => (
-          <button
-            key={o.value}
-            className={`tab${days === o.value ? ' on' : ''}`}
-            onClick={() => setDays(o.value)}
-            style={{ fontSize: 12, padding: '4px 10px' }}
-          >
-            {o.label}
-          </button>
-        ))}
+    <div role="region" aria-label={t('tokenUsage.tokenUsageByAgent')}>
+      <div style={{ padding: '0 var(--space-4)', marginBottom: 'var(--space-3)' }}>
+        <TokenPeriodPicker period={period} ariaLabel={t('tokenUsage.agentPeriod')} errorId="agent-date-error" />
       </div>
-
+      {period.range.error ? (
+        <div id="agent-date-error" role="alert"><AlertBanner variant="error">{t('sessions.' + period.range.error)}</AlertBanner></div>
+      ) : error ? <AlertBanner variant="error">{error}</AlertBanner>
+        : loading || !agents ? <Loading />
+        : agents.length === 0 ? <EmptyState>{t('tokenUsage.noAgentData')}</EmptyState> : (
       <div style={{ padding: '0 var(--space-4)' }}>
         {/* Header */}
         <div style={{
@@ -984,6 +916,7 @@ function TokenByAgent() {
           <span>{t('tokenUsage.sessions')}: <strong style={{ color: 'var(--text)' }}>{agents.reduce((s, a) => s + a.session_count, 0)}</strong></span>
         </div>
       </div>
+      )}
     </div>
   );
 }

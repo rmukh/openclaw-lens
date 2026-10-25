@@ -1262,6 +1262,8 @@
     "share": "占比",
     "scheduledCron": "定时任务 (Cron)",
     "manualInteractive": "手动 / 交互",
+    "agentPeriod": "智能体用量时间范围",
+    "noAgentData": "此范围内没有智能体 token 用量。",
     "tokenUsageByAgent": "按智能体 Token 用量",
     "today": "今天",
     "tokenComposition": "Token 组成",

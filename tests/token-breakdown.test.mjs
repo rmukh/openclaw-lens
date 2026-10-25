@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 require('ts-node').register({ transpileOnly: true });
 const { openDb, initSchema } = require('../src/server/db.ts');
 const { tokensRouter } = require('../src/server/api/tokens.ts');
+const { profilerRouter } = require('../src/server/api/profiler.ts');
 const express = require('express');
 
 test('token breakdown applies custom boundaries to totals, every grouping, and contributing sessions', async () => {
@@ -44,6 +45,7 @@ test('token breakdown applies custom boundaries to totals, every grouping, and c
       row.tokens / 4, row.tokens / 20, row.tokens, row.cost));
     const app = express();
     app.use('/api/tokens', tokensRouter(db));
+    app.use('/api/profiler', profilerRouter(db));
     server = app.listen(0, '127.0.0.1');
     await new Promise(resolve => server.once('listening', resolve));
     const url = `http://127.0.0.1:${server.address().port}/api/tokens/summary`;
@@ -81,6 +83,38 @@ test('token breakdown applies custom boundaries to totals, every grouping, and c
     const localExpected = fixtures.filter(row => row.at >= localFrom && row.at < localTo && row.cost >= 0 && !row.model).reduce((sum, row) => sum + row.tokens, 0);
     assert.equal((await get({ from: '2026-01-05', to: '2026-01-08' })).totals.total, localExpected);
     assert.equal((await get({ days: '365' })).totals.total, 2600);
+    const profilerUrl = `http://127.0.0.1:${server.address().port}/api/profiler/tokens`;
+    const query = new URLSearchParams({ from: String(from), to: String(to) });
+    const agentRows = await fetch(`${profilerUrl}?${query}`).then(response => response.json());
+    assert.equal(agentRows.reduce((sum, row) => sum + row.total_tokens, 0), result.totals.total);
+    assert.equal(agentRows.reduce((sum, row) => sum + row.total_cost, 0), result.totals.cost);
+    for (const agent of agentRows) {
+      const sessions = await fetch(`${profilerUrl}/${agent.agent_name}/sessions?${query}`).then(response => response.json());
+      assert.equal(sessions.reduce((sum, row) => sum + row.total_tokens, 0), agent.total_tokens);
+      assert.equal(sessions.reduce((sum, row) => sum + row.total_cost, 0), agent.total_cost);
+      assert.equal(sessions.reduce((sum, row) => sum + row.message_count, 0), agent.message_count);
+      assert.equal(sessions.length, agent.session_count);
+    }
+    // Switching periods must refilter an already-expanded agent's sessions.
+    const narrowed = await fetch(`${profilerUrl}/alpha/sessions?from=${from}&to=${from + 1}`).then(response => response.json());
+    assert.equal(narrowed.length, 1);
+    assert.equal(narrowed[0].total_tokens, 100);
+    assert.deepEqual(await fetch(`${profilerUrl}?to=0`).then(response => response.json()), []);
+    session.run('ancient', 'alpha', Date.UTC(2020, 0, 1), Date.UTC(2020, 0, 1), 0);
+    insert.run('ancient-msg', 'ancient', 'alpha', Date.UTC(2020, 0, 1), 'model-a', 7, 0, 0, 0, 7, 0.07);
+    const allAgents = await fetch(profilerUrl).then(response => response.json());
+    assert.equal(allAgents.reduce((sum, row) => sum + row.total_tokens, 0), 2607);
+    assert.equal((await get({ from: '1970-01-01T00:00:00.000Z' })).totals.total, 2607);
+    insert.run('zero-msg', 'manual', 'beta', to + 2000, 'model-b', 0, 0, 0, 0, 0, 0);
+    const zeroOnly = await fetch(`${profilerUrl}?from=${to + 2000}&to=${to + 2001}`).then(response => response.json());
+    assert.equal(zeroOnly.length, 1);
+    assert.equal(zeroOnly[0].total_tokens, 0);
+    assert.equal(zeroOnly[0].session_count, 1);
+    for (const endpoint of [profilerUrl, `${profilerUrl}/alpha/sessions`]) {
+      for (const qs of ['from=bad', 'from=', 'from=1.5', 'from=1&from=2', 'from=2&to=1', 'from=0&to=0']) {
+        assert.equal((await fetch(`${endpoint}?${qs}`)).status, 400);
+      }
+    }
     for (const params of [{ from: '' }, { from: 'bad' }, { from: '2026-02-30' }, { from: '2026-01-08', to: '2026-01-05' }, { from: '2026-01-05', to: '2026-01-05' }, { from: '2026-01-05', to: 'bad' }]) {
       assert.equal((await fetch(`${url}?${new URLSearchParams(params)}`)).status, 400);
     }

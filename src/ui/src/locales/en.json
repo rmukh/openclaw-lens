@@ -1269,6 +1269,8 @@
     "share": "Share",
     "scheduledCron": "Scheduled (Cron)",
     "manualInteractive": "Manual / Interactive",
+    "agentPeriod": "Agent usage period",
+    "noAgentData": "No agent token usage in this range.",
     "tokenUsageByAgent": "Token Usage by Agent",
     "today": "Today",
     "tokenComposition": "Token composition",

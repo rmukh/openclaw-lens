@@ -4,6 +4,7 @@
 
 ### Added
 
+- Give Token Usage by Agent the same independent period picker as Breakdown, including Monday-based This Week, day/week navigation, and inclusive custom ranges. Expanded sessions follow the selected bounds, and empty ranges retain usable controls.
 - “This Week (Mon–today)” and custom calendar ranges in Token Usage's Breakdown section. All agent/model/cron breakdowns use the selected interval, with timezone-aware boundaries and inclusive custom end dates.
 - Custom date ranges in Sessions, with start/end calendar inputs, inclusive local dates, and validation. Session membership and token/cost/error/cache totals use the selected range.
 - A combined Workspace / Run column in Sessions, with workspace filtering and search by workspace, run/session name, agent, routing key, or UUID. Expanded details include the workspace path and session key.
@@ -17,6 +18,7 @@
 
 ### Fixed
 
+- Use full recorded history for All Time in both token sections, and apply consistent validated range bounds and billable-message filters to agent totals and expanded sessions.
 - Derive Sessions activity from the latest real message and tool activity instead of labelling every recently updated session as Running. Closed turns become Idle, unfinished recent turns show In progress, and stale/ambiguous turns show Unknown. Refresh statuses on live log updates and keep Active now consistent with the badges.
 - Preserve the browser's HTTP origin through the development WebSocket proxy so live updates pass the server's localhost origin check.
 - Count all sessions contributing tokens within a breakdown range, including sessions with later activity outside that range; avoid displaying unrelated summary data while a breakdown is loading or invalid.

@@ -98,6 +98,11 @@ In Token Usage's **Breakdown** section, **This Week (Mon–today)** starts at lo
 midnight on Monday. **Custom range** uses two calendar inputs separated by `-`,
 including both selected dates. These filters apply to the agent, model, and
 cron/manual breakdowns independently of the Summary and Token Trend controls.
+**Token Usage by Agent** has its own identical picker: Today, This Week,
+Last 7/30/90 Days, All Time, By Day, By Week, and Custom range. Its totals,
+shares, session counts, and expanded top sessions all use that section's selected
+range. The picker stays visible when no usage matches. All Time in these two
+sections includes the full recorded history.
 
 In Sessions, choose the sort field in the dropdown and click the adjacent arrow
 button to switch between ↑ ascending and ↓ descending. Direction applies to every
