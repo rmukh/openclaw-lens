@@ -10,6 +10,14 @@ export function localDateInput(timestamp = Date.now()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+/** Calendar weeks begin at local midnight on Monday, including on Sundays. */
+export function mondayStart(timestamp = Date.now()): number {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - (date.getDay() + 6) % 7);
+  return date.getTime();
+}
+
 function parseLocalDay(value: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const [year, month, day] = value.split('-').map(Number);

@@ -1,3 +1,4 @@
+import { localDateInput, mondayStart, sessionDateRange } from '../lib/session-date-range';
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -452,11 +453,8 @@ export default function TokenUsage() {
   const { data: data30d, loading, error: tokensError } = useFetch<TokenSummary>('/api/tokens/summary?days=30', []);
   const { data: dataAll } = useFetch<TokenSummary>('/api/tokens/summary?days=365', []);
 
-  const dataMap: Record<number, TokenSummary | null> = { 1: dataToday ?? null, 7: data7d ?? null, 30: data30d ?? null, 365: dataAll ?? null };
-  const data = dataMap[days];
-
   // Breakdown has its own independent time filter (uses DateNavigator)
-  type BreakdownMode = 'preset' | 'day' | 'week';
+  type BreakdownMode = 'preset' | 'day' | 'week' | 'this_week' | 'custom';
   const [bdMode, setBdMode] = useState<BreakdownMode>('preset');
   const [bdPreset, setBdPreset] = useState(7);
   const bdToday = React.useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
@@ -465,28 +463,30 @@ export default function TokenUsage() {
   // "week" mode: pick a 7-day window (uses DateNavigator mode="day" — week list picker)
   const [bdWeekEnd, setBdWeekEnd] = useState(bdToday);
 
-  const bdApiUrl = React.useMemo(() => {
-    const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const addD = (d: Date, n: number) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
-    if (bdMode === 'day') {
-      return `/api/tokens/summary?from=${fmt(bdSingleDay)}&to=${fmt(addD(bdSingleDay, 1))}`;
-    }
-    if (bdMode === 'week') {
-      return `/api/tokens/summary?from=${fmt(addD(bdWeekEnd, -6))}&to=${fmt(addD(bdWeekEnd, 1))}`;
-    }
-    return `/api/tokens/summary?days=${bdPreset}`;
-  }, [bdMode, bdPreset, bdSingleDay, bdWeekEnd]);
-
-  const { data: breakdownData } = useFetch<TokenSummary>(bdApiUrl, [bdApiUrl]);
-
+  const [bdCustomStart, setBdCustomStart] = useState(() => localDateInput());
+  const [bdCustomEnd, setBdCustomEnd] = useState(() => localDateInput());
+  const currentMonday = mondayStart();
+  const bdRange = useMemo(() => {
+    if (bdMode === 'custom') return sessionDateRange('custom', bdCustomStart, bdCustomEnd);
+    if (bdMode === 'this_week') return { from: currentMonday };
+    if (bdMode === 'day') return sessionDateRange('custom', toDateStr(bdSingleDay), toDateStr(bdSingleDay));
+    if (bdMode === 'week') return sessionDateRange('custom', toDateStr(addDays(bdWeekEnd, -6)), toDateStr(bdWeekEnd));
+    return {};
+  }, [bdMode, bdCustomStart, bdCustomEnd, currentMonday, bdSingleDay, bdWeekEnd]);
+  const bdParams = new URLSearchParams();
+  if (bdMode === 'preset') bdParams.set('days', String(bdPreset));
+  if (bdRange.from !== undefined) bdParams.set('from', new Date(bdRange.from).toISOString());
+  if (bdRange.to !== undefined) bdParams.set('to', new Date(bdRange.to).toISOString());
+  const bdApiUrl = bdRange.error ? '' : `/api/tokens/summary?${bdParams}`;
+  const { data: breakdownData, loading: breakdownLoading, error: breakdownError } = useFetch<TokenSummary>(bdApiUrl, [bdApiUrl]);
 
   if (loading && !data30d) return <Loading />;
   if (tokensError && !data30d && !data7d && !dataToday) return <div style={{ padding: 'var(--space-5)' }}><AlertBanner variant="error">{tokensError}</AlertBanner></div>;
   if (!data30d && !data7d && !dataToday) return <EmptyState>{t('tokenUsage.noTokenData')}</EmptyState>;
 
-  const active = data ?? data30d!;
-  const bd = breakdownData ?? active;
-  const { byModel, byAgent, cronVsManual } = bd;
+  const { byModel = [], byAgent = [], cronVsManual = {
+    cron: { tokens: 0, cost: 0, sessions: 0 }, manual: { tokens: 0, cost: 0, sessions: 0 },
+  } } = breakdownData ?? {};
 
   return (
     <div style={{ padding: 'var(--space-5)' }}>
@@ -547,26 +547,43 @@ export default function TokenUsage() {
       <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--text)', marginTop: 48 }}>{t('tokenUsage.breakdown')}</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-3)', flexWrap: 'wrap' }}>
         <Dropdown
+          ariaLabel={t('tokenUsage.breakdownPeriod')}
           value={bdMode === 'preset' ? `p_${bdPreset}` : bdMode}
           onChange={(v: string) => {
             if (v.startsWith('p_')) { setBdMode('preset'); setBdPreset(Number(v.slice(2))); }
             else if (v === 'day') { setBdMode('day'); setBdSingleDay(bdToday); }
             else if (v === 'week') { setBdMode('week'); setBdWeekEnd(bdToday); }
+            else if (v === 'this_week' || v === 'custom') setBdMode(v);
           }}
           options={[
             { label: t('tokenUsage.today'), value: 'p_1' },
+            { label: t('tokenUsage.thisWeek'), value: 'this_week' },
             { label: t('tokenUsage.last7Days'), value: 'p_7' },
             { label: t('tokenUsage.last30Days'), value: 'p_30' },
             { label: t('tokenUsage.last90Days'), value: 'p_90' },
             { label: t('tokenUsage.allTime'), value: 'p_365' },
             { label: t('tokenUsage.byDay'), value: 'day' },
             { label: t('tokenUsage.byWeek'), value: 'week' },
+            { label: t('sessions.customRange'), value: 'custom' },
           ]}
         />
+        {bdMode === 'custom' && (
+          <div role="group" aria-label={t('sessions.customRange')} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <input type="date" aria-label={t('sessions.startDate')} value={bdCustomStart} max={bdCustomEnd || undefined} required aria-invalid={!!bdRange.error} aria-describedby={bdRange.error ? 'breakdown-date-error' : undefined} onChange={e => setBdCustomStart(e.target.value)} style={{ padding: '.35rem .55rem' }} />
+            <span aria-hidden="true" style={{ color: 'var(--muted)' }}>-</span>
+            <input type="date" aria-label={t('sessions.endDate')} value={bdCustomEnd} min={bdCustomStart || undefined} required aria-invalid={!!bdRange.error} aria-describedby={bdRange.error ? 'breakdown-date-error' : undefined} onChange={e => setBdCustomEnd(e.target.value)} style={{ padding: '.35rem .55rem' }} />
+          </div>
+        )}
         {bdMode === 'day' && <DateNavigator mode="hour" value={bdSingleDay} onChange={setBdSingleDay} />}
         {bdMode === 'week' && <DateNavigator mode="day" value={bdWeekEnd} onChange={setBdWeekEnd} />}
       </div>
 
+      <div role="region" aria-label={t('tokenUsage.breakdown')}>
+      {bdRange.error ? (
+        <div id="breakdown-date-error" role="alert" style={{ marginTop: 'var(--space-3)' }}><AlertBanner variant="error">{t('sessions.' + bdRange.error)}</AlertBanner></div>
+      ) : breakdownError ? (
+        <AlertBanner variant="error">{breakdownError}</AlertBanner>
+      ) : breakdownLoading || !breakdownData ? <Loading /> : (<>
       {/* ── 4. By Agent (first) ── */}
       <div style={{ marginTop: 'var(--space-4)' }}>
         <SectionLabel>{t('tokenUsage.byAgent')}</SectionLabel>
@@ -754,6 +771,9 @@ export default function TokenUsage() {
             </Card>
           </div>
         </div>
+      </div>
+
+      </>)}
       </div>
 
       {/* ── Token Usage by Agent ── */}

@@ -4,6 +4,7 @@
 
 ### Added
 
+- “This Week (Mon–today)” and custom calendar ranges in Token Usage's Breakdown section. All agent/model/cron breakdowns use the selected interval, with timezone-aware boundaries and inclusive custom end dates.
 - Custom date ranges in Sessions, with start/end calendar inputs, inclusive local dates, and validation. Session membership and token/cost/error/cache totals use the selected range.
 - A combined Workspace / Run column in Sessions, with workspace filtering and search by workspace, run/session name, agent, routing key, or UUID. Expanded details include the workspace path and session key.
 - Workspace and session-name metadata from OpenClaw transcripts, agent configuration, and session indexes. Existing databases automatically re-ingest transcript metadata; older unnamed sessions remain visible.
@@ -16,6 +17,7 @@
 
 ### Fixed
 
+- Count all sessions contributing tokens within a breakdown range, including sessions with later activity outside that range; avoid displaying unrelated summary data while a breakdown is loading or invalid.
 - Eliminate the execution Gantt's horizontal overflow by reserving space for turn durations, keeping endpoint ticks inside the plot, and adapting the chart to narrow widths.
 - Keep a single pending gateway reconnect when offline, preventing exponential retry growth and excessive memory use.
 - Treat Windows path separators correctly when locating session directories for live updates.

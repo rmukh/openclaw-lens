@@ -1239,6 +1239,8 @@
     "noTrendData": "该范围暂无趋势数据。",
     "priceNote": "：计费方式因模型提供商而异（Anthropic、OpenAI 等）",
     "tokenTotal": "Token 总量",
+    "thisWeek": "本周（周一至今）",
+    "breakdownPeriod": "明细时间范围",
     "breakdown": "分析",
     "byAgent": "按智能体",
     "byModel": "按模型",

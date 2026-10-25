@@ -8,7 +8,18 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../src/ui/src/lib/session-date-range.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { sessionDateRange, localDateInput } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+const { sessionDateRange, localDateInput, mondayStart } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+
+test('week-to-date starts on Monday in local time, including Sundays and year boundaries', () => {
+  for (const [now, monday] of [
+    [new Date(2026, 9, 19, 0, 0), new Date(2026, 9, 19)],
+    [new Date(2026, 9, 21, 17, 30), new Date(2026, 9, 19)],
+    [new Date(2026, 9, 25, 23, 59), new Date(2026, 9, 19)],
+    [new Date(2026, 0, 1, 12), new Date(2025, 11, 29)],
+  ]) {
+    assert.equal(mondayStart(now.getTime()), monday.getTime());
+  }
+});
 
 test('custom dates include both selected calendar days and preserve existing presets', () => {
   const now = new Date(2026, 9, 25, 17, 30).getTime();
@@ -43,6 +54,8 @@ test('calendar range endpoints respect 23- and 25-hour daylight saving days', ()
       assert.equal((range.to - range.from) / 3600000, hours);
       assert.equal(new Date(range.to).getHours(), 0);
     }
+    assert.equal(mondayStart(new Date(2026, 2, 8, 12).getTime()), new Date(2026, 2, 2).getTime());
+    assert.equal(mondayStart(new Date(2026, 10, 1, 12).getTime()), new Date(2026, 9, 26).getTime());
   } finally {
     if (original === undefined) delete process.env.TZ;
     else process.env.TZ = original;

@@ -258,14 +258,17 @@ export function Dropdown<T extends string | number>({
   onChange,
   options,
   style,
+  ariaLabel,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { label: string; value: T }[];
   style?: React.CSSProperties;
+  ariaLabel?: string;
 }) {
   return (
     <select
+      aria-label={ariaLabel}
       value={String(value)}
       onChange={e => {
         const raw = e.target.value;

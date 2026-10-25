@@ -94,6 +94,11 @@ claw-lens is built for this new reality. Cost, not latency, is the dominant sign
 
 For detailed per-page, per-tab documentation: **[claw-lens.com/monitoring/overview](https://claw-lens.com/monitoring/overview)**
 
+In Token Usage's **Breakdown** section, **This Week (Mon–today)** starts at local
+midnight on Monday. **Custom range** uses two calendar inputs separated by `-`,
+including both selected dates. These filters apply to the agent, model, and
+cron/manual breakdowns independently of the Summary and Token Trend controls.
+
 In Sessions, choose the sort field in the dropdown and click the adjacent arrow
 button to switch between ↑ ascending and ↓ descending. Direction applies to every
 field. Last active is the default and includes the former Newest sort behavior.

@@ -6,14 +6,29 @@ export function tokensRouter(db: Database.Database): Router {
 
   // GET /api/tokens/summary?days=30  OR  ?from=2026-03-20&to=2026-03-21
   r.get('/summary', (req: Request, res: Response) => {
-    const fromParam = req.query.from as string | undefined;
-    const toParam = req.query.to as string | undefined;
+    const fromParam = req.query.from;
+    const toParam = req.query.to;
     let cutoff: number;
     let cutoffEnd: number | null = null;
 
-    if (fromParam && toParam) {
-      cutoff = new Date(fromParam).getTime();
-      cutoffEnd = new Date(toParam).getTime();
+    if (fromParam !== undefined || toParam !== undefined) {
+      const parseBound = (value: unknown): number => {
+        if (typeof value !== 'string' || !value.trim()) return NaN;
+        // Date-only callers use local calendar boundaries; ISO timestamps carry
+        // the browser's explicit timezone for custom ranges and Monday starts.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          const date = new Date(value + 'T00:00:00');
+          const formatted = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+          return formatted === value ? date.getTime() : NaN;
+        }
+        return new Date(value).getTime();
+      };
+      cutoff = fromParam === undefined ? 0 : parseBound(fromParam);
+      cutoffEnd = toParam === undefined ? null : parseBound(toParam);
+      if (!Number.isFinite(cutoff) || (cutoffEnd !== null && (!Number.isFinite(cutoffEnd) || cutoffEnd <= cutoff))) {
+        res.status(400).json({ error: 'Invalid time range: provide valid dates with from before to.' });
+        return;
+      }
     } else {
       const days = Math.min(Math.max(parseInt(req.query.days as string) || 30, 1), 365);
       const rolling = req.query.rolling === '1';
@@ -32,9 +47,9 @@ export function tokensRouter(db: Database.Database): Router {
       AND m.model NOT IN ('delivery-mirror', 'gateway-injected')
       AND m.cost_total >= 0
       AND m.timestamp >= ?
-      ${cutoffEnd ? 'AND m.timestamp < ?' : ''}
+      ${cutoffEnd !== null ? 'AND m.timestamp < ?' : ''}
     `;
-    const baseParams = cutoffEnd ? [cutoff, cutoffEnd] : [cutoff];
+    const baseParams = cutoffEnd !== null ? [cutoff, cutoffEnd] : [cutoff];
 
     // ── Totals ──
     const totals = db.prepare(`
@@ -60,22 +75,10 @@ export function tokensRouter(db: Database.Database): Router {
       ? cacheRead / (cacheRead + inputTokens)
       : 0;
 
-    // Session count: count sessions whose last assistant message is within the window
-    const sessionCountSql = cutoffEnd
-      ? `SELECT COUNT(*) AS sessionCount FROM (
-          SELECT m.session_id, MAX(m.timestamp) AS last_msg
-          FROM messages m
-          WHERE m.role = 'assistant' AND m.model NOT IN ('delivery-mirror', 'gateway-injected')
-          GROUP BY m.session_id
-          HAVING last_msg >= ? AND last_msg < ?
-        )`
-      : `SELECT COUNT(*) AS sessionCount FROM (
-          SELECT m.session_id, MAX(m.timestamp) AS last_msg
-          FROM messages m
-          WHERE m.role = 'assistant' AND m.model NOT IN ('delivery-mirror', 'gateway-injected')
-          GROUP BY m.session_id
-          HAVING last_msg >= ?
-        )`;
+    // Count the sessions contributing to these exact totals, even if they also
+    // have later activity outside a historical custom range.
+    const sessionCountSql = `SELECT COUNT(DISTINCT m.session_id) AS sessionCount
+      FROM messages m WHERE ${baseWhere}`;
     const sessionStats = db.prepare(sessionCountSql).get(...baseParams) as { sessionCount: number };
     const sessionCount = sessionStats.sessionCount;
     const avgCostPerSession = sessionCount > 0 ? totals.cost / sessionCount : 0;

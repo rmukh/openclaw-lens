@@ -1246,6 +1246,8 @@
     "costNote2": "P_read is significantly discounted — often around 10% of P_input (standard input rate)",
     "costNote3": "cache_write may be billed separately depending on the provider, though some platforms incorporate it into the standard input pricing",
     "costDisclaimer": "Cost figures are estimated based on OpenClaw's built-in pricing logic. For authoritative billing, refer to your model provider (Anthropic, OpenAI, etc.).",
+    "thisWeek": "This Week (Mon–today)",
+    "breakdownPeriod": "Breakdown period",
     "breakdown": "Breakdown",
     "byAgent": "BY AGENT",
     "byModel": "BY MODEL",
