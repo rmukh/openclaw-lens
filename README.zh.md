@@ -1,12 +1,11 @@
 [English](./README.md) | [中文](./README.zh.md)
 
-# claw-lens
+# openclaw-lens
 
-[![npm version](https://img.shields.io/npm/v/claw-lens-cli)](https://www.npmjs.com/package/claw-lens-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green)](https://nodejs.org)
 
-**claw-lens 将 Observability、Analytics 与开发者工具融合为一 —— 为 [OpenClaw](https://openclaw.ai) agent 提供成本追踪、Session 分析、Profiler、Cache Trace 和安全审计，全部跑在本地。**
+**openclaw-lens 将 Observability、Analytics 与开发者工具融合为一 —— 为 [OpenClaw](https://openclaw.ai) agent 提供成本追踪、Session 分析、Profiler、Cache Trace 和安全审计，全部跑在本地。**
 
 ---
 
@@ -14,7 +13,7 @@
 
 过去做监控的工具，默认写代码的人、看日志的人、修 bug 的人都是工程师。AI agent 把这件事改了。现在用 agent 干活的人——创业者、分析师、运营、跨境电商从业者——他们不是工程师，Datadog 和 Honeycomb 也不是给他们做的。
 
-claw-lens 就是在这个背景下做的。对 agent 来说，最该盯的不是延迟，是钱。最基本的单位不是一次请求，是一整个 session。而最严重的问题——agent 读了不该读的文件、把密钥暴露出去、被注入的指令带着跑——根本不会报错。你得有个工具，能把系统真正在干什么摊开给你看。
+openclaw-lens 就是在这个背景下做的。对 agent 来说，最该盯的不是延迟，是钱。最基本的单位不是一次请求，是一整个 session。而最严重的问题——agent 读了不该读的文件、把密钥暴露出去、被注入的指令带着跑——根本不会报错。你得有个工具，能把系统真正在干什么摊开给你看。
 
 → [claw-lens.com/engineering/agent-observability](https://claw-lens.com/engineering/agent-observability)
 
@@ -185,13 +184,13 @@ OpenClaw 会话，将数据库保存到 `.dev/claw-lens.db`，与已安装仪表
 
 ## 架构
 
-claw-lens 完全跑在本地。它读 OpenClaw 写到磁盘上的文件——session JSONL、缓存日志、定时任务配置、agent 记忆——把 session 数据解析进 SQLite，再通过 Express API 给 React 前端用。不依赖外部服务，不用部署，不需要配置文件。
+openclaw-lens 完全跑在本地。它读 OpenClaw 写到磁盘上的文件——session JSONL、缓存日志、定时任务配置、agent 记忆——把 session 数据解析进 SQLite，再通过 Express API 给 React 前端用。不依赖外部服务，不用部署，不需要配置文件。
 
 四个核心原则：
 
 - **零配置** — `npx claw-lens-cli` 自动建表、导入数据、打开浏览器。装了 Node.js 就能用。
 - **成本优先** — 美元花费是最醒目的数字，session、模型、agent 三个维度都能看到。Token 明细在下一层，想看随时点进去。
-- **本地只读** — 服务只监听 `127.0.0.1`，不往外发请求，不碰 agent 的文件。claw-lens 唯一写的东西是自己的 SQLite 数据库。
+- **本地只读** — 服务只监听 `127.0.0.1`，不往外发请求，不碰 agent 的文件。openclaw-lens 唯一写的东西是自己的 SQLite 数据库。
 - **规则驱动的安全审计** — 每个 tool call 入库时就用确定性规则打分，不靠机器学习。每个 agent 有自己的行为基线用来检测异常。规则全是透明的——看代码就知道为什么会被标记。
 
 完整设计文档（数据模型、技术选型、各种取舍）：**[claw-lens.com/engineering/design-doc](https://claw-lens.com/engineering/design-doc)**
@@ -200,7 +199,7 @@ claw-lens 完全跑在本地。它读 OpenClaw 写到磁盘上的文件——ses
 
 ## 数据来源
 
-claw-lens 直接读本地 OpenClaw 数据目录（默认 `~/.openclaw/`）：
+openclaw-lens 直接读本地 OpenClaw 数据目录（默认 `~/.openclaw/`）：
 
 | 路径 | 内容 |
 |------|------|
@@ -210,11 +209,11 @@ claw-lens 直接读本地 OpenClaw 数据目录（默认 `~/.openclaw/`）：
 | `workspace-*/`, `agents/*/workspace/` | Agent 记忆和工作区文件 |
 | `openclaw.json` | Gateway 认证 token，用于实时 WebSocket 连接 |
 
-claw-lens 只写一个文件：`~/.openclaw/claw-lens.db`（SQLite）。
+openclaw-lens 只写一个文件：`~/.openclaw/claw-lens.db`（SQLite）。
 
 ---
 
-> **所有数据都在本地。** claw-lens 只监听 `127.0.0.1`，CORS 限制在 localhost，不发任何外部请求。唯一的网络连接是到你本机 OpenClaw Gateway 的 WebSocket。没有任何东西会离开你的电脑。
+> **所有数据都在本地。** openclaw-lens 只监听 `127.0.0.1`，CORS 限制在 localhost，不发任何外部请求。唯一的网络连接是到你本机 OpenClaw Gateway 的 WebSocket。没有任何东西会离开你的电脑。
 
 ---
 
