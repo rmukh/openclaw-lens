@@ -213,7 +213,7 @@ Four principles shape the architecture:
 
 - **Zero configuration** — `npx claw-lens-cli` auto-creates the schema, ingests all session data, and opens the browser. The only prerequisite is Node.js.
 - **Cost first** — USD cost is the primary signal, visible per-session, per-model, and per-agent. Token breakdowns are one layer deeper for when users need them.
-- **Local and read-only** — the server binds to `127.0.0.1`, makes no outbound calls, and never modifies agent files. The only file claw-lens writes is its own SQLite database.
+- **Local and read-only** — the server binds to `127.0.0.1`, makes no outbound calls, and never modifies agent files. The only file openclaw-lens writes is its own SQLite database.
 - **Rule-based security audit** — every tool call is risk-scored at ingestion time with deterministic rules, not ML. Per-agent behavioral baselines detect anomalies. The rules are transparent — read the code and know exactly why something was flagged.
 
 Full design doc with data model, technical choices, and trade-offs: **[claw-lens.com/engineering/design-doc](https://claw-lens.com/engineering/design-doc)**
