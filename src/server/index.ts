@@ -21,6 +21,7 @@ export interface ServerOptions {
   clawHome?: string;
   dbPath?: string;
   open?: boolean;
+  serveUi?: boolean;
 }
 
 export async function startServer(opts: ServerOptions = {}): Promise<void> {
@@ -51,6 +52,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
     },
   }));
   app.use(express.json());
+
+  // Listening begins only after initial ingestion and model metadata are ready.
+  app.get('/api/health', (_req, res) => {
+    res.json({ service: 'claw-lens', status: 'ok' });
+  });
 
   // API routes
   app.use('/api/sessions', sessionsRouter(db, opts.clawHome));
@@ -90,10 +96,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
   const uiDist = fs.existsSync(path.join(__dirname, '../../../dist/ui'))
     ? path.join(__dirname, '../../../dist/ui')
     : path.join(process.cwd(), 'dist/ui');
-  if (fs.existsSync(uiDist)) {
+  if (opts.serveUi !== false && fs.existsSync(uiDist)) {
     app.use(express.static(uiDist));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(uiDist, 'index.html'));
+    });
+  }
+  if (opts.serveUi === false) {
+    app.get('/', (_req, res) => {
+      res.type('text').send('claw-lens API. Open the development dashboard at http://localhost:6060');
     });
   }
 
@@ -103,7 +114,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
   setupLiveWs(server, db, opts.clawHome);
 
   server.listen(port, '127.0.0.1', () => {
-    console.log(`\nclaw-lens running at http://localhost:${port}\n`);
+    console.log(`\nclaw-lens${opts.serveUi === false ? ' API' : ''} ready at http://localhost:${port}\n`);
     if (opts.open) {
       import('child_process').then(({ exec }) => {
         const url = `http://localhost:${port}`;
@@ -123,5 +134,6 @@ if (require.main === module) {
     console.error(`Invalid PORT: ${process.env.PORT}. Must be 1-65535.`);
     process.exit(1);
   }
-  startServer({ port, open: true }).catch(console.error);
+  const apiOnly = process.argv.includes('--api-only');
+  startServer({ port, open: !apiOnly, serveUi: !apiOnly }).catch(console.error);
 }

@@ -13,6 +13,7 @@ startServer({
   clawHome: process.env.OPENCLAW_HOME,
   dbPath: path.join(dataDir, demo ? 'demo.db' : 'claw-lens.db'),
   open: false,
+  serveUi: false,
 }).catch(err => {
   console.error(err);
   process.exitCode = 1;

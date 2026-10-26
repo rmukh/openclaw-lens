@@ -9,7 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { globSync } from 'glob';
 
 /* ── Context Window Limits ───────────────────────────────────────────── */
@@ -98,21 +98,30 @@ function findOpenClawDir(): string | null {
     return path.dirname(pkgPath);
   } catch { /* not in local node_modules */ }
 
-  // 2. Resolve via `which openclaw` binary → lib/node_modules/openclaw/
+  // npm uses adjacent node_modules on Windows and symlinks on Unix.
   try {
-    const bin = execSync('which openclaw', { encoding: 'utf8', timeout: 3000 }).trim();
-    if (bin) {
-      const real = fs.realpathSync(bin);
-      // e.g. .../lib/node_modules/openclaw/dist/cli.js → .../lib/node_modules/openclaw
-      // or   .../lib/node_modules/openclaw/openclaw.mjs → .../lib/node_modules/openclaw
-      const dir = path.dirname(real);
-      if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
-      // bin might be a symlink directly into the package root
-      const parent = path.dirname(dir);
-      if (fs.existsSync(path.join(parent, 'package.json'))) return parent;
-    }
-  } catch { /* which not available or openclaw not installed */ }
+    const bins = execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', ['openclaw'], {
+      encoding: 'utf8', timeout: 3000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().split(/\r?\n/).filter(Boolean);
+    return resolveOpenClawDir(bins);
+  } catch { /* lookup unavailable or OpenClaw not installed */ }
 
+  return null;
+}
+
+/** Resolve Windows npm shims or Unix binary targets to the actual OpenClaw package. */
+export function resolveOpenClawDir(bins: string[]): string | null {
+  for (const bin of bins) {
+    try {
+      const dir = path.dirname(fs.realpathSync(bin));
+      for (const candidate of [path.join(dir, 'node_modules', 'openclaw'), dir, path.dirname(dir)]) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(candidate, 'package.json'), 'utf8'));
+          if (pkg.name === 'openclaw') return candidate;
+        } catch { /* Try the next layout. */ }
+      }
+    } catch { /* Try other executables returned by where.exe. */ }
+  }
   return null;
 }
 

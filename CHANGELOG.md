@@ -18,6 +18,9 @@
 
 ### Fixed
 
+- Avoid aborting live WebSocket handshakes during React development checks or page navigation, preventing repeated Windows `ECONNABORTED` proxy errors while keeping reconnects and live updates working.
+- Keep the development dashboard on port 6060, wait for API readiness before starting Vite, and stop both development processes when either exits. Use the backend's IPv4 address for HTTP/WebSocket proxying.
+- Locate OpenClaw through Windows npm shims as well as Unix executables, without printing a missing `which` error on Windows.
 - Refresh session, message, and tool timestamps when changed transcripts are re-ingested, so restarting demos updates date-filtered usage in an existing database.
 - Generate demo sessions with current token-bearing final replies, including immediately after midnight on Monday, and keep all demo timestamps at or before startup time.
 - Use full recorded history for All Time in both token sections, and apply consistent validated range bounds and billable-message filters to agent totals and expanded sessions.

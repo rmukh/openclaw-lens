@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { connectLiveSocket } from '../lib/live-connection';
 import type { TFunction } from 'i18next';
 import { PageHeader, EmptyState, Loading } from '../components/ui';
 import { useFetch, fmtMs } from '../hooks';
@@ -241,34 +242,15 @@ export default function LiveMonitor() {
   const [wsConnected, setWsConnected] = useState(false);
 
   useEffect(() => {
-    let disposed = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let activeWs: WebSocket | null = null;
-
-    function connect() {
-      if (disposed) return;
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${window.location.host}/ws/live`);
-      activeWs = ws;
-      ws.onopen  = () => { if (!disposed) setWsConnected(true); };
-      ws.onmessage = (e) => {
-        try {
-          const msg = JSON.parse(e.data as string) as { type?: string };
-          if (msg.type === 'data_updated') setTick(t => t + 1);
-        } catch { /* ignore */ }
-      };
-      ws.onclose = () => { if (!disposed) { setWsConnected(false); retryTimer = setTimeout(connect, 3000); } };
-      ws.onerror = () => {};
-    }
-
-    connect();
+    const disconnect = connectLiveSocket({
+      onConnectionChange: setWsConnected,
+      onMessage: msg => { if (msg.type === 'data_updated') setTick(t => t + 1); },
+    });
     const POLL_INTERVAL_MS = 5_000;
     const pollId = setInterval(() => setTick(t => t + 1), POLL_INTERVAL_MS);
 
     return () => {
-      disposed = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      if (activeWs) { activeWs.onclose = null; activeWs.close(); }
+      disconnect();
       clearInterval(pollId);
     };
   }, []);

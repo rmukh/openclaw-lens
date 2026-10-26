@@ -20,10 +20,11 @@ export default defineConfig({
     host: true,
     strictPort: true,
     proxy: {
-      '/api': 'http://localhost:4242',
+      '/api': 'http://127.0.0.1:4242',
       '/ws': {
-        target: 'ws://localhost:4242',
+        target: 'ws://127.0.0.1:4242',
         ws: true,
+        rewriteWsOrigin: false,
       },
     },
   },

@@ -178,6 +178,9 @@ npm run dev
 ```
 
 Runs backend (Express + ts-node-dev, port 4242) and frontend (React + Vite, port 6060) concurrently with hot reload. Changes to `src/server/` or `src/ui/` apply instantly.
+The frontend waits for the API to finish loading sessions before starting. Open
+<http://localhost:6060> for development; port 4242 serves the API only, even if a
+previous production build exists. `npm run dev:ui` also requires a running backend.
 
 For development with a separate database, run `npm run dev:local`. The dashboard
 is available at <http://localhost:6060> and the API at <http://localhost:4242>.
