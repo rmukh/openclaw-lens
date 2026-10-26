@@ -1222,6 +1222,13 @@
     "p95Label": "P95:"
   },
   "tokenUsage": {
+    "llmResponses": "LLM 回复数",
+    "toolCalls": "工具调用数",
+    "byTool": "按工具",
+    "tool": "工具",
+    "noToolCalls": "此时间范围内没有记录到工具调用。",
+    "recordedCounts": "关于记录计数",
+    "recordedCountsHelp": "LLM 回复数统计日志中的助手回复，包括请求工具的回复，并非已核实的 API 请求数。工具调用数统计已记录的请求，包括失败或未完成的尝试；工具结果不会重复计数。两者均按发起回复的日期统计，并与 Token 总量使用相同的排除规则。日志中未记录的调用无法统计。这些数据不是计费统计。",
     "title": "Token 用量",
     "summary": "概要",
     "todaySince": "今天 (从 00:00 起)",

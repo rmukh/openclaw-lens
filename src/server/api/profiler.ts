@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import Database from 'better-sqlite3';
 import * as crypto from 'crypto';
+import { recordedMessageFilter, recordedToolUsage, TOOL_CALL_COUNT_SQL } from '../recorded-usage';
 
 function tokenWindow(req: Request, res: Response): { from?: number; to?: number } | null {
   const timestamp = (value: unknown) => value === undefined ? undefined
@@ -63,10 +64,7 @@ export function profilerRouter(db: Database.Database): Router {
     if (!window) return;
     const { from, to } = window;
 
-    let where = "WHERE role = 'assistant' AND model NOT IN ('delivery-mirror', 'gateway-injected') AND cost_total >= 0";
-    const params: number[] = [];
-    if (from !== undefined) { where += ' AND timestamp >= ?'; params.push(from); }
-    if (to !== undefined)   { where += ' AND timestamp < ?';  params.push(to); }
+    const { where, params } = recordedMessageFilter(from, to);
 
     const rows = db.prepare(`
       SELECT
@@ -78,19 +76,26 @@ export function profilerRouter(db: Database.Database): Router {
         SUM(total_tokens) AS total_tokens,
         SUM(cost_total) AS total_cost,
         COUNT(*) AS message_count,
-        COUNT(DISTINCT session_id) AS session_count
-      FROM messages
-      ${where}
+        COUNT(DISTINCT session_id) AS session_count,
+        ${TOOL_CALL_COUNT_SQL} AS tool_call_count
+      FROM messages m
+      WHERE ${where}
       GROUP BY agent_name
       ORDER BY total_tokens DESC
     `).all(...params) as Array<{
       agent_name: string;
       input_tokens: number; output_tokens: number;
       cache_read: number; cache_write: number; total_tokens: number;
-      total_cost: number; message_count: number; session_count: number;
+      total_cost: number; message_count: number; session_count: number; tool_call_count: number;
     }>;
 
-    res.json(rows);
+    const toolsByAgent = new Map<string, { tool_name: string; call_count: number }[]>();
+    for (const tool of recordedToolUsage(db, from, to)) {
+      const tools = toolsByAgent.get(tool.agent_name) ?? [];
+      tools.push({ tool_name: tool.tool_name, call_count: tool.call_count });
+      toolsByAgent.set(tool.agent_name, tools);
+    }
+    res.json(rows.map(row => ({ ...row, tools: toolsByAgent.get(row.agent_name) ?? [] })));
   });
 
   // GET /api/profiler/tokens/:agent/sessions — top sessions by token for an agent
@@ -100,10 +105,7 @@ export function profilerRouter(db: Database.Database): Router {
     if (!window) return;
     const { from, to } = window;
 
-    let where = "WHERE m.role = 'assistant' AND m.model NOT IN ('delivery-mirror', 'gateway-injected') AND m.cost_total >= 0 AND m.agent_name = ?";
-    const params: (string | number)[] = [agent];
-    if (from !== undefined) { where += ' AND m.timestamp >= ?'; params.push(from); }
-    if (to !== undefined)   { where += ' AND m.timestamp < ?';  params.push(to); }
+    const { where, params } = recordedMessageFilter(from, to, agent);
 
     const rows = db.prepare(`
       SELECT
@@ -114,10 +116,11 @@ export function profilerRouter(db: Database.Database): Router {
         SUM(m.total_tokens) AS total_tokens,
         SUM(m.cost_total) AS total_cost,
         COUNT(*) AS message_count,
+        ${TOOL_CALL_COUNT_SQL} AS tool_call_count,
         s.started_at
       FROM messages m
       LEFT JOIN sessions s ON s.id = m.session_id
-      ${where}
+      WHERE ${where}
       GROUP BY m.session_id
       ORDER BY total_tokens DESC
       LIMIT 15

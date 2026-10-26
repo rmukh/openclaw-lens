@@ -1222,6 +1222,13 @@
     "p95Label": "P95:"
   },
   "tokenUsage": {
+    "llmResponses": "LLM responses",
+    "toolCalls": "Tool calls",
+    "byTool": "By Tool",
+    "tool": "Tool",
+    "noToolCalls": "No tool calls recorded in this range.",
+    "recordedCounts": "About recorded counts",
+    "recordedCountsHelp": "LLM responses count recorded assistant replies, including replies requesting tools, rather than verified API requests. Tool calls count recorded requests, including failed or unfinished attempts; results do not count again. Both use the originating reply's date and the same exclusions as token totals. Calls absent from the logs cannot be counted. These are not billing statistics.",
     "title": "Token Usage",
     "summary": "Summary",
     "todaySince": "Today (since 00:00)",

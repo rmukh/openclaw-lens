@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import Database from 'better-sqlite3';
 import { listRegisteredAgents } from '../paths';
+import { recordedMessageFilter, recordedToolUsage, TOOL_CALL_COUNT_SQL } from '../recorded-usage';
 export function tokensRouter(db: Database.Database): Router {
   const r = Router();
 
@@ -42,14 +43,7 @@ export function tokensRouter(db: Database.Database): Router {
     }
 
     // Base filters: assistant only, exclude non-billable models and bad cost data
-    const baseWhere = `
-      m.role = 'assistant'
-      AND m.model NOT IN ('delivery-mirror', 'gateway-injected')
-      AND m.cost_total >= 0
-      AND m.timestamp >= ?
-      ${cutoffEnd !== null ? 'AND m.timestamp < ?' : ''}
-    `;
-    const baseParams = cutoffEnd !== null ? [cutoff, cutoffEnd] : [cutoff];
+    const { where: baseWhere, params: baseParams } = recordedMessageFilter(cutoff, cutoffEnd ?? undefined);
 
     // ── Totals ──
     const totals = db.prepare(`
@@ -59,12 +53,14 @@ export function tokensRouter(db: Database.Database): Router {
         COALESCE(SUM(m.cache_read), 0)    AS cacheRead,
         COALESCE(SUM(m.cache_write), 0)   AS cacheWrite,
         COALESCE(SUM(m.total_tokens), 0)  AS total,
-        COALESCE(SUM(m.cost_total), 0)    AS cost
+        COALESCE(SUM(m.cost_total), 0)    AS cost,
+        COUNT(*) AS llmResponses,
+        ${TOOL_CALL_COUNT_SQL} AS toolCalls
       FROM messages m
       WHERE ${baseWhere}
     `).get(...baseParams) as {
       input: number; output: number; cacheRead: number;
-      cacheWrite: number; total: number; cost: number;
+      cacheWrite: number; total: number; cost: number; llmResponses: number; toolCalls: number;
     };
 
     const cacheRead = totals.cacheRead;
@@ -112,7 +108,8 @@ export function tokensRouter(db: Database.Database): Router {
         COALESCE(SUM(m.cache_write), 0)   AS cacheWrite,
         COALESCE(SUM(m.total_tokens), 0)  AS total,
         COALESCE(SUM(m.cost_total), 0)    AS cost,
-        COUNT(*)                           AS messages
+        COUNT(*)                           AS messages,
+        ${TOOL_CALL_COUNT_SQL} AS toolCalls
       FROM messages m
       WHERE ${baseWhere}
       GROUP BY m.model, m.provider
@@ -120,7 +117,7 @@ export function tokensRouter(db: Database.Database): Router {
     `).all(...baseParams) as {
       model: string; provider: string; input: number; output: number;
       cacheRead: number; cacheWrite: number; total: number;
-      cost: number; messages: number;
+      cost: number; messages: number; toolCalls: number;
     }[];
 
     // ── By Agent ──
@@ -137,7 +134,9 @@ export function tokensRouter(db: Database.Database): Router {
         COALESCE(SUM(m.cache_write), 0)   AS cacheWrite,
         COALESCE(SUM(m.total_tokens), 0)  AS total,
         COALESCE(SUM(m.cost_total), 0)    AS cost,
-        COUNT(DISTINCT s.id)               AS sessions
+        COUNT(DISTINCT s.id)               AS sessions,
+        COUNT(*) AS llmResponses,
+        ${TOOL_CALL_COUNT_SQL} AS toolCalls
       FROM messages m
       JOIN sessions s ON m.session_id = s.id
       WHERE ${baseWhere}
@@ -146,11 +145,11 @@ export function tokensRouter(db: Database.Database): Router {
     `).all(...baseParams) as {
       agent: string; input: number; output: number;
       cacheRead: number; cacheWrite: number; total: number;
-      cost: number; sessions: number;
+      cost: number; sessions: number; llmResponses: number; toolCalls: number;
     }[];
     const agentMap = new Map(agentStats.map(a => [a.agent, a]));
     const byAgent = allAgents.map(({ agent_name }) => agentMap.get(agent_name) ?? {
-      agent: agent_name, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0, sessions: 0,
+      agent: agent_name, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0, sessions: 0, llmResponses: 0, toolCalls: 0,
     }).sort((a, b) => b.total - a.total);
 
     // ── Cron vs Manual ──
@@ -159,12 +158,14 @@ export function tokensRouter(db: Database.Database): Router {
       SELECT
         COALESCE(SUM(m.total_tokens), 0) AS tokens,
         COALESCE(SUM(m.cost_total), 0)   AS cost,
-        COUNT(DISTINCT s.id)              AS sessions
+        COUNT(DISTINCT s.id)              AS sessions,
+        COUNT(*) AS llmResponses,
+        ${TOOL_CALL_COUNT_SQL} AS toolCalls
       FROM messages m
       JOIN sessions s ON m.session_id = s.id
       WHERE ${baseWhere}
         AND s.is_cron = 1
-    `).get(...baseParams) as { tokens: number; cost: number; sessions: number };
+    `).get(...baseParams) as { tokens: number; cost: number; sessions: number; llmResponses: number; toolCalls: number };
 
     const manualTokens = totals.total - cronSessions.tokens;
     const manualCost = totals.cost - cronSessions.cost;
@@ -182,13 +183,24 @@ export function tokensRouter(db: Database.Database): Router {
         tokens: cronSessions.tokens,
         cost: parseFloat(cronSessions.cost.toFixed(4)),
         sessions: cronSessions.sessions,
+        llmResponses: cronSessions.llmResponses,
+        toolCalls: cronSessions.toolCalls,
       },
       manual: {
         tokens: manualTokens,
         cost: parseFloat(manualCost.toFixed(4)),
         sessions: totalSessions - cronSessions.sessions,
+        llmResponses: totals.llmResponses - cronSessions.llmResponses,
+        toolCalls: totals.toolCalls - cronSessions.toolCalls,
       },
     };
+
+    const toolCounts = new Map<string, number>();
+    for (const tool of recordedToolUsage(db, cutoff, cutoffEnd ?? undefined)) {
+      toolCounts.set(tool.tool_name, (toolCounts.get(tool.tool_name) ?? 0) + tool.call_count);
+    }
+    const byTool = [...toolCounts].map(([toolName, toolCalls]) => ({ toolName, toolCalls }))
+      .sort((a, b) => b.toolCalls - a.toolCalls || (a.toolName < b.toolName ? -1 : a.toolName > b.toolName ? 1 : 0));
 
     res.json({
       totals: {
@@ -202,6 +214,7 @@ export function tokensRouter(db: Database.Database): Router {
       byModel: byModel.map(m => ({ ...m, cost: parseFloat(m.cost.toFixed(4)) })),
       byAgent: byAgent.map(a => ({ ...a, cost: parseFloat(a.cost.toFixed(4)) })),
       cronVsManual,
+      byTool,
     });
   });
 

@@ -88,6 +88,7 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_model     ON messages(model);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON tool_calls(message_id);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_tool    ON tool_calls(tool_name);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_ts      ON tool_calls(timestamp);
     CREATE INDEX IF NOT EXISTS idx_sessions_agent     ON sessions(agent_name);

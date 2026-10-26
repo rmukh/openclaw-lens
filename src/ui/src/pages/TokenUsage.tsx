@@ -1,4 +1,6 @@
 import { TokenPeriodPicker } from '../components/TokenPeriodPicker';
+import { RecordedCount, RecordedUsageStats, ToolUsageTable } from '../components/RecordedUsage';
+import './token-usage.css';
 import { useTokenPeriod } from '../lib/use-token-period';
 import { tokenPeriodQuery } from '../lib/token-period';
 import React, { useState, useMemo } from 'react';
@@ -19,7 +21,7 @@ interface TokenSummary {
   totals: {
     input: number; output: number; cacheRead: number; cacheWrite: number;
     total: number; cost: number; cacheHitRate: number;
-    sessionCount: number; avgCostPerSession: number;
+    sessionCount: number; avgCostPerSession: number; llmResponses: number; toolCalls: number;
   };
   byDay: {
     date: string; input: number; output: number;
@@ -28,17 +30,18 @@ interface TokenSummary {
   byModel: {
     model: string; provider: string; input: number; output: number;
     cacheRead: number; cacheWrite: number; total: number;
-    cost: number; messages: number;
+    cost: number; messages: number; toolCalls: number;
   }[];
   byAgent: {
     agent: string; input: number; output: number;
     cacheRead: number; cacheWrite: number; total: number;
-    cost: number; sessions: number;
+    cost: number; sessions: number; llmResponses: number; toolCalls: number;
   }[];
   cronVsManual: {
-    cron: { tokens: number; cost: number; sessions: number };
-    manual: { tokens: number; cost: number; sessions: number };
+    cron: { tokens: number; cost: number; sessions: number; llmResponses: number; toolCalls: number };
+    manual: { tokens: number; cost: number; sessions: number; llmResponses: number; toolCalls: number };
   };
+  byTool: { toolName: string; toolCalls: number }[];
 }
 
 // ── Chart colors ──
@@ -464,8 +467,8 @@ export default function TokenUsage() {
   if (tokensError && !data30d && !data7d && !dataToday) return <div style={{ padding: 'var(--space-5)' }}><AlertBanner variant="error">{tokensError}</AlertBanner></div>;
   if (!data30d && !data7d && !dataToday) return <EmptyState>{t('tokenUsage.noTokenData')}</EmptyState>;
 
-  const { byModel = [], byAgent = [], cronVsManual = {
-    cron: { tokens: 0, cost: 0, sessions: 0 }, manual: { tokens: 0, cost: 0, sessions: 0 },
+  const { byModel = [], byAgent = [], byTool = [], cronVsManual = {
+    cron: { tokens: 0, cost: 0, sessions: 0, llmResponses: 0, toolCalls: 0 }, manual: { tokens: 0, cost: 0, sessions: 0, llmResponses: 0, toolCalls: 0 },
   } } = breakdownData ?? {};
 
   return (
@@ -535,10 +538,13 @@ export default function TokenUsage() {
       ) : breakdownError ? (
         <AlertBanner variant="error">{breakdownError}</AlertBanner>
       ) : breakdownLoading || !breakdownData ? <Loading /> : (<>
+      <div style={{ marginTop: 'var(--space-4)' }}>
+        <RecordedUsageStats llmResponses={breakdownData.totals.llmResponses} toolCalls={breakdownData.totals.toolCalls} explain />
+      </div>
       {/* ── 4. By Agent (first) ── */}
       <div style={{ marginTop: 'var(--space-4)' }}>
         <SectionLabel>{t('tokenUsage.byAgent')}</SectionLabel>
-        <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 'var(--space-4)', marginTop: 'var(--space-3)', alignItems: 'start' }}>
+        <div className="token-breakdown-grid">
           {(() => {
             const agentPieTotal = byAgent.reduce((s, a) => s + a.total, 0);
             const agentPieData = byAgent.filter(a => a.total > 0).map(a => ({
@@ -565,7 +571,7 @@ export default function TokenUsage() {
           </ResponsiveContainer>
             );
           })()}
-          <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <Card style={{ padding: 0, overflowX: 'auto', minWidth: 0 }}>
             <table style={TABLE_STYLE}>
               <thead>
                 <tr>
@@ -575,6 +581,8 @@ export default function TokenUsage() {
                   <th style={thRight}>{t('tokenUsage.cacheHit')}</th>
                   <th style={thRight}>{t('tokenUsage.cost')}</th>
                   <th style={thRight}>{t('tokenUsage.sessions')}</th>
+                  <th style={thRight}>{t('tokenUsage.llmResponses')}</th>
+                  <th style={thRight}>{t('tokenUsage.toolCalls')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -589,6 +597,8 @@ export default function TokenUsage() {
                     <td style={{ ...tdRight, color: hitRateColor((a.cacheRead + a.input) > 0 ? a.cacheRead / (a.cacheRead + a.input) : 0), fontWeight: 500 }}>{(a.cacheRead + a.input) > 0 ? fmtPct(a.cacheRead / (a.cacheRead + a.input), 4) : '—'}</td>
                     <td style={tdRight}>{fmtCost(a.cost)}</td>
                     <td style={tdRight}>{a.sessions}</td>
+                    <td style={tdRight}><RecordedCount value={a.llmResponses} /></td>
+                    <td style={tdRight}><RecordedCount value={a.toolCalls} /></td>
                   </tr>
                 )); })()}
               </tbody>
@@ -606,10 +616,10 @@ export default function TokenUsage() {
           const top = sorted.slice(0, 5);
           const rest = sorted.slice(5);
           const modelRows = rest.length > 0
-            ? [...top, { model: `Other (${rest.length})`, total: rest.reduce((s, r) => s + r.total, 0), cost: rest.reduce((s, r) => s + r.cost, 0), messages: rest.reduce((s, r) => s + r.messages, 0), input: rest.reduce((s, r) => s + r.input, 0), output: rest.reduce((s, r) => s + r.output, 0), cacheRead: rest.reduce((s, r) => s + r.cacheRead, 0), cacheWrite: rest.reduce((s, r) => s + r.cacheWrite, 0), sessions: 0 }]
+            ? [...top, { model: `Other (${rest.length})`, total: rest.reduce((s, r) => s + r.total, 0), cost: rest.reduce((s, r) => s + r.cost, 0), messages: rest.reduce((s, r) => s + r.messages, 0), toolCalls: rest.reduce((s, r) => s + r.toolCalls, 0), input: rest.reduce((s, r) => s + r.input, 0), output: rest.reduce((s, r) => s + r.output, 0), cacheRead: rest.reduce((s, r) => s + r.cacheRead, 0), cacheWrite: rest.reduce((s, r) => s + r.cacheWrite, 0), sessions: 0 }]
             : top;
           return (
-        <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 'var(--space-4)', marginTop: 'var(--space-3)', alignItems: 'start' }}>
+        <div className="token-breakdown-grid">
           {(() => {
             const modelPieTotal = modelRows.reduce((s, m) => s + m.total, 0);
             const modelPieData = modelRows.filter(m => m.total > 0).map(m => ({
@@ -636,7 +646,7 @@ export default function TokenUsage() {
           </ResponsiveContainer>
             );
           })()}
-          <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <Card style={{ padding: 0, overflowX: 'auto', minWidth: 0 }}>
             <table style={TABLE_STYLE}>
               <thead>
                 <tr>
@@ -645,7 +655,8 @@ export default function TokenUsage() {
                   <th style={thRight}>{t('tokenUsage.percent')}</th>
                   <th style={thRight}>{t('tokenUsage.cacheHit')}</th>
                   <th style={thRight}>{t('tokenUsage.cost')}</th>
-                  <th style={thRight}>{t('tokenUsage.messages')}</th>
+                  <th style={thRight}>{t('tokenUsage.llmResponses')}</th>
+                  <th style={thRight}>{t('tokenUsage.toolCalls')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -660,7 +671,8 @@ export default function TokenUsage() {
                     <td style={{ ...tdRight, color: 'var(--muted)' }}>{modelTotal > 0 ? fmtPct(m.total / modelTotal, 1) : '—'}</td>
                     <td style={{ ...tdRight, color: hitRateColor((m.cacheRead + m.input) > 0 ? m.cacheRead / (m.cacheRead + m.input) : 0), fontWeight: 500 }}>{(m.cacheRead + m.input) > 0 ? fmtPct(m.cacheRead / (m.cacheRead + m.input), 4) : '—'}</td>
                     <td style={tdRight}>{fmtCost(m.cost)}</td>
-                    <td style={tdRight}>{fmtTokens(m.messages)}</td>
+                    <td style={tdRight}><RecordedCount value={m.messages} /></td>
+                    <td style={tdRight}><RecordedCount value={m.toolCalls} /></td>
                   </tr>
                 )); })()}
               </tbody>
@@ -674,7 +686,7 @@ export default function TokenUsage() {
       {/* ── 6. Cron vs Manual ── */}
       <div style={{ marginTop: 40 }}>
         <SectionLabel>{t('tokenUsage.cronVsManual')}</SectionLabel>
-        <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 'var(--space-4)', marginTop: 'var(--space-3)', alignItems: 'center' }}>
+        <div className="token-breakdown-grid" style={{ alignItems: 'center' }}>
           {(() => {
             const cronTotal = cronVsManual.cron.tokens + cronVsManual.manual.tokens;
             const cronPieData = [
@@ -703,7 +715,7 @@ export default function TokenUsage() {
           </ResponsiveContainer>
             );
           })()}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+          <div className="token-cron-cards">
             <Card>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 'var(--space-2)' }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: CHART_PURPLE, marginRight: 6, verticalAlign: 'middle' }} />{t('tokenUsage.scheduledCron')}</div>
               <div style={{ fontSize: 20, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: CHART_PURPLE }}>{fmtTokens(cronVsManual.cron.tokens)}</div>
@@ -711,6 +723,7 @@ export default function TokenUsage() {
                 <span>{fmtCostKpi(cronVsManual.cron.cost)}</span>
                 <span>{cronVsManual.cron.sessions} {t('tokenUsage.sessions').toLowerCase()}</span>
               </div>
+              <div style={{ marginTop: 'var(--space-2)' }}><RecordedUsageStats llmResponses={cronVsManual.cron.llmResponses} toolCalls={cronVsManual.cron.toolCalls} /></div>
             </Card>
             <Card>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 'var(--space-2)' }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: CHART_BLUE, marginRight: 6, verticalAlign: 'middle' }} />{t('tokenUsage.manualInteractive')}</div>
@@ -719,11 +732,16 @@ export default function TokenUsage() {
                 <span>{fmtCostKpi(cronVsManual.manual.cost)}</span>
                 <span>{cronVsManual.manual.sessions} {t('tokenUsage.sessions').toLowerCase()}</span>
               </div>
+              <div style={{ marginTop: 'var(--space-2)' }}><RecordedUsageStats llmResponses={cronVsManual.manual.llmResponses} toolCalls={cronVsManual.manual.toolCalls} /></div>
             </Card>
           </div>
         </div>
       </div>
 
+      <div style={{ marginTop: 40 }}>
+        <SectionLabel>{t('tokenUsage.byTool')}</SectionLabel>
+        <div style={{ marginTop: 'var(--space-3)' }}><ToolUsageTable tools={byTool} /></div>
+      </div>
       </>)}
       </div>
 
@@ -743,15 +761,17 @@ interface TokenAgentRow {
   agent_name: string;
   input_tokens: number; output_tokens: number;
   cache_read: number; cache_write: number; total_tokens: number;
-  total_cost: number; message_count: number; session_count: number;
+  total_cost: number; message_count: number; session_count: number; tool_call_count: number;
+  tools: { tool_name: string; call_count: number }[];
 }
 
 const AGENT_COLORS = ['#60a5fa', '#c084fc', '#34d399', '#fbbf24', '#f472b6', '#22d3ee', '#fb923c', '#a3e635'];
+const AGENT_ROW_COLUMNS = '20px minmax(100px, 1fr) 80px 72px 85px 80px minmax(80px, 1fr) 40px';
 
 interface TokenAgentSession {
   session_id: string; input_tokens: number; output_tokens: number;
   cache_read: number; total_tokens: number; total_cost: number;
-  message_count: number; started_at: number;
+  message_count: number; started_at: number; tool_call_count: number;
 }
 
 function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, timeQs }: {
@@ -775,7 +795,7 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
       {/* Collapsed row */}
       <div
         style={{
-          display: 'grid', gridTemplateColumns: '20px 80px 80px 72px 1fr 40px',
+          display: 'grid', gridTemplateColumns: AGENT_ROW_COLUMNS, minWidth: 740,
           alignItems: 'center', gap: 'var(--space-2)',
           padding: 'var(--space-2) 0', cursor: 'pointer', transition: 'background .1s',
         }}
@@ -793,6 +813,8 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
         <div style={{ fontSize: 13, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
           {fmtCost(agent.total_cost)}
         </div>
+        <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}><RecordedCount value={agent.message_count} /></div>
+        <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}><RecordedCount value={agent.tool_call_count} /></div>
         <div style={{ height: 14, background: 'var(--surface2)', position: 'relative', overflow: 'hidden', borderRadius: 3 }}>
           <div style={{ position: 'absolute', inset: 0, width: `${maxTokens > 0 ? (agent.total_tokens / maxTokens) * 100 : 0}%`, background: color, borderRadius: 3 }} />
         </div>
@@ -805,7 +827,7 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
       {expanded && (
         <div style={{ padding: '8px 16px 16px 28px', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
           {/* Stats */}
-          <div style={{ display: 'flex', gap: 20, fontSize: 13, marginBottom: 12, color: 'var(--muted)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, fontSize: 13, marginBottom: 12, color: 'var(--muted)' }}>
             <span>{t('tokenUsage.input')}: <strong style={{ color: 'var(--text)' }}>{fmtTokens(agent.input_tokens)}</strong></span>
             <span>{t('tokenUsage.output')}: <strong style={{ color: 'var(--text)' }}>{fmtTokens(agent.output_tokens)}</strong></span>
             <span>{t('tokenUsage.cacheRead')}: <strong style={{ color: 'var(--text)' }}>{fmtTokens(agent.cache_read)}</strong></span>
@@ -845,13 +867,20 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
           </div>
 
           {/* Top sessions */}
+          <div style={{ margin: '12px 0' }}>
+            <RecordedUsageStats llmResponses={agent.message_count} toolCalls={agent.tool_call_count} />
+          </div>
+          <SectionLabel>{t('tokenUsage.byTool')}</SectionLabel>
+          <div style={{ margin: '8px 0 16px' }}>
+            <ToolUsageTable tools={agent.tools.map(tool => ({ toolName: tool.tool_name, toolCalls: tool.call_count }))} />
+          </div>
           {sessionsError && <AlertBanner variant="error">{sessionsError}</AlertBanner>}
           {topSessions && topSessions.length > 0 && (
             <div>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>{t('tokenUsage.topSessionsByToken')}</div>
               {topSessions.slice(0, 5).map(s => (
                 <div key={s.session_id} data-token-session={s.session_id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '3px 6px', cursor: 'pointer', borderRadius: 3 }}
+                  style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12, padding: '3px 6px', cursor: 'pointer', borderRadius: 3 }}
                   onClick={() => navigate(`/sessions?q=${s.session_id}`)}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
@@ -859,7 +888,8 @@ function TokenAgentExpandable({ agent, totalAllTokens, maxTokens, colorIdx, time
                   <span style={{ fontFamily: 'var(--font-m)', color: 'var(--text)' }}>{s.session_id.slice(0, 20)}…</span>
                   <span style={{ color: 'var(--text)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{fmtTokens(s.total_tokens)}</span>
                   <span style={{ color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtCost(s.total_cost)}</span>
-                  <span style={{ color: 'var(--muted)', fontSize: 11 }}>{s.message_count} {t('tokenUsage.msgs')}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 11 }}><RecordedCount value={s.message_count} /> {t('tokenUsage.llmResponses')}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 11 }}><RecordedCount value={s.tool_call_count} /> {t('tokenUsage.toolCalls')}</span>
                   <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 'auto' }}>{t('tokenUsage.view')}</span>
                 </div>
               ))}
@@ -891,9 +921,10 @@ function TokenByAgent() {
         : loading || !agents ? <Loading />
         : agents.length === 0 ? <EmptyState>{t('tokenUsage.noAgentData')}</EmptyState> : (
       <div style={{ padding: '0 var(--space-4)' }}>
+        <div style={{ overflowX: 'auto' }}>
         {/* Header */}
         <div style={{
-          display: 'grid', gridTemplateColumns: '20px 80px 80px 72px 1fr 40px',
+          display: 'grid', gridTemplateColumns: AGENT_ROW_COLUMNS, minWidth: 740,
           gap: 'var(--space-2)', fontSize: 11, color: 'var(--muted)',
           textTransform: 'uppercase', letterSpacing: '.04em',
           padding: '0 0 6px', borderBottom: '1px solid var(--border)',
@@ -902,6 +933,8 @@ function TokenByAgent() {
           <div>{t('tokenUsage.agent')}</div>
           <div>{t('tokenUsage.tokens')}</div>
           <div>{t('tokenUsage.cost')}</div>
+          <div>{t('tokenUsage.llmResponses')}</div>
+          <div>{t('tokenUsage.toolCalls')}</div>
           <div>{t('tokenUsage.share')}</div>
           <div />
         </div>
@@ -909,11 +942,15 @@ function TokenByAgent() {
         {agents.map((a, i) => (
           <TokenAgentExpandable key={a.agent_name} agent={a} totalAllTokens={totalTokens} maxTokens={maxTokens} colorIdx={i} timeQs={qs} />
         ))}
+        </div>
 
         <div style={{ display: 'flex', gap: 'var(--space-4)', marginTop: 'var(--space-3)', fontSize: 13, color: 'var(--muted)' }}>
           <span>{t('tokenUsage.total')}: <strong style={{ color: 'var(--text)' }}>{fmtTokens(totalTokens)}</strong></span>
           <span>{t('tokenUsage.cost')}: <strong style={{ color: 'var(--text)' }}>{fmtCostKpi(agents.reduce((s, a) => s + a.total_cost, 0))}</strong></span>
           <span>{t('tokenUsage.sessions')}: <strong style={{ color: 'var(--text)' }}>{agents.reduce((s, a) => s + a.session_count, 0)}</strong></span>
+        </div>
+        <div style={{ marginTop: 'var(--space-3)' }}>
+          <RecordedUsageStats llmResponses={agents.reduce((sum, a) => sum + a.message_count, 0)} toolCalls={agents.reduce((sum, a) => sum + a.tool_call_count, 0)} explain />
         </div>
       </div>
       )}

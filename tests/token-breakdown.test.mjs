@@ -66,7 +66,7 @@ test('token breakdown applies custom boundaries to totals, every grouping, and c
     assert.equal(result.byAgent.find(row => row.agent === 'alpha').sessions, 2);
     assert.equal(result.byModel.reduce((sum, row) => sum + row.messages, 0), 3);
     assert.deepEqual(result.cronVsManual, {
-      cron: { tokens: 100, cost: 1, sessions: 1 }, manual: { tokens: 500, cost: 5, sessions: 2 },
+      cron: { tokens: 100, cost: 1, sessions: 1, llmResponses: 1, toolCalls: 0 }, manual: { tokens: 500, cost: 5, sessions: 2, llmResponses: 2, toolCalls: 0 },
     });
     // Week-to-date uses a single explicit Monday boundary, with no rolling fallback.
     assert.equal((await get({ from: new Date(from).toISOString() })).totals.total, 1700);

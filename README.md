@@ -103,6 +103,16 @@ shares, session counts, and expanded top sessions all use that section's selecte
 range. The picker stays visible when no usage matches. All Time in these two
 sections includes the full recorded history.
 
+Both sections show separate **LLM responses** and **Tool calls** counts, with
+per-tool details and counts by agent, model, cron/manual, and expanded sessions.
+An LLM response is a recorded assistant reply, including one requesting tools;
+it is not a verified API-request count. Each recorded tool request counts once,
+including failed or unfinished attempts, while its result does not count again.
+Both counts use the originating reply's date and the same message exclusions as
+token totals. Zero-cost replies and replies without usage metadata count too.
+These are recorded activity counts, not provider billing statistics; events absent
+from OpenClaw logs cannot be counted. Counts display as exact integers.
+
 In Sessions, choose the sort field in the dropdown and click the adjacent arrow
 button to switch between ↑ ascending and ↓ descending. Direction applies to every
 field. Last active is the default and includes the former Newest sort behavior.
