@@ -1,12 +1,11 @@
 [English](./README.md) | [中文](./README.zh.md)
 
-# claw-lens
+# openclaw-lens
 
-[![npm version](https://img.shields.io/npm/v/claw-lens-cli)](https://www.npmjs.com/package/claw-lens-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green)](https://nodejs.org)
 
-**claw-lens combines observability, analytics, and developer tooling for [OpenClaw](https://openclaw.ai) agents — cost tracking, session inspection, profiler, cache trace, and security audit in one local dashboard.**
+**openclaw-lens combines observability, analytics, and developer tooling for [OpenClaw](https://openclaw.ai) agents — cost tracking, session inspection, profiler, cache trace, and security audit in one local dashboard.**
 
 ---
 
@@ -14,7 +13,7 @@
 
 Traditional observability tools assume that the person writing the code, reading the logs, and fixing the bug are the same person. AI agents broke that assumption. The people deploying agents today — founders, analysts, operators — are not the people who built Datadog or Honeycomb, and those tools were never designed to serve them.
 
-claw-lens is built for this new reality. Cost, not latency, is the dominant signal. The atomic unit is a session, not a request. And the errors that matter most — an agent reading files it shouldn't, leaking a credential, executing injected instructions — never throw exceptions. You need a tool that shows the real shape of these systems, built for people who are learning to read it.
+openclaw-lens is built for this new reality. Cost, not latency, is the dominant signal. The atomic unit is a session, not a request. And the errors that matter most — an agent reading files it shouldn't, leaking a credential, executing injected instructions — never throw exceptions. You need a tool that shows the real shape of these systems, built for people who are learning to read it.
 
 → [claw-lens.com/engineering/agent-observability](https://claw-lens.com/engineering/agent-observability)
 
@@ -208,7 +207,7 @@ npm run build && npm start   # production build
 
 ## Architecture
 
-claw-lens runs entirely on your machine. It reads the files OpenClaw already writes to disk — session JSONL, cache traces, cron configs, agent memory — parses session logs into SQLite, and serves everything through an Express API to a React frontend. No external services, no deployment, no configuration files.
+openclaw-lens runs entirely on your machine. It reads the files OpenClaw already writes to disk — session JSONL, cache traces, cron configs, agent memory — parses session logs into SQLite, and serves everything through an Express API to a React frontend. No external services, no deployment, no configuration files.
 
 Four principles shape the architecture:
 
@@ -223,7 +222,7 @@ Full design doc with data model, technical choices, and trade-offs: **[claw-lens
 
 ## Data Sources
 
-claw-lens reads directly from the local OpenClaw data directory (`~/.openclaw/` by default):
+openclaw-lens reads directly from the local OpenClaw data directory (`~/.openclaw/` by default):
 
 | Path | Content |
 |------|---------|
@@ -233,11 +232,11 @@ claw-lens reads directly from the local OpenClaw data directory (`~/.openclaw/` 
 | `workspace-*/`, `agents/*/workspace/` | Agent memory and workspace files |
 | `openclaw.json` | Gateway auth token for live WebSocket connection |
 
-claw-lens writes only one file: `~/.openclaw/claw-lens.db` (SQLite).
+openclaw-lens writes only one file: `~/.openclaw/claw-lens.db` (SQLite).
 
 ---
 
-> **All data stays local.** claw-lens binds to `127.0.0.1`, restricts CORS to localhost, makes no outbound HTTP calls, and sends no telemetry. The only network connection is the WebSocket to your local OpenClaw Gateway. Nothing leaves your machine.
+> **All data stays local.** openclaw-lens binds to `127.0.0.1`, restricts CORS to localhost, makes no outbound HTTP calls, and sends no telemetry. The only network connection is the WebSocket to your local OpenClaw Gateway. Nothing leaves your machine.
 
 ---
 
