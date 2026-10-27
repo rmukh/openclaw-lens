@@ -88,6 +88,12 @@ async function capturedContext(home: string, file: string, session: string, sele
     if (record.message?.role === 'assistant') for (const id of toolIds(record.message)) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   const unique = ids.length > 0 && ids.every(id => counts.get(id) === 1);
+  const requestBlocks = (message: Obj | undefined) => Array.isArray(message?.content) ? message.content
+    .filter((block: Obj) => block && ['toolCall', 'tool_use'].includes(block.type))
+    .map((block: Obj) => ({ id: block.id, name: block.name,
+      arguments: Object.prototype.hasOwnProperty.call(block, 'arguments') ? block.arguments : block.input })) : [];
+  const sameRequest = (message: Obj) => message?.role === 'assistant'
+    && canonical(requestBlocks(message)) === canonical(requestBlocks(selected.message));
   let trajectory: Obj[] = [];
   let traceState: State = 'missing';
   try { trajectory = await readJsonl(path.join(path.dirname(file), session + '.trajectory.jsonl')); }
@@ -99,7 +105,7 @@ async function capturedContext(home: string, file: string, session: string, sele
   const runs = unique ? compiled.filter(event => Array.isArray(event.data.messages)
     && !event.data.messages.some((message: Obj) => toolIds(message).some(id => ids.includes(id)))
     && trajectory.some(end => end.type === 'model.completed' && end.runId === event.runId
-      && Array.isArray(end.data?.messagesSnapshot) && end.data.messagesSnapshot.some((message: Obj) => ids.every(id => toolIds(message).includes(id))))) : [];
+      && Array.isArray(end.data?.messagesSnapshot) && end.data.messagesSnapshot.some(sameRequest))) : [];
   const run = runs.length === 1 ? runs[0] : undefined;
   let cache: Obj[] = [];
   // Paths come from server configuration, never HTTP input.
@@ -115,14 +121,17 @@ async function capturedContext(home: string, file: string, session: string, sele
   const matches: Obj[] = [];
   let duplicateInput = false;
   if (unique && run) {
+    const completions = trajectory.filter(event => event.type === 'model.completed' && event.runId === run.runId);
+    const conflictingCompletion = new Set(completions.map(event => canonical(event.data?.messagesSnapshot))).size !== 1;
     const steps = cache.filter(event => event.sessionId === session && event.runId === run.runId && event.stage === 'stream:context'
       && Number.isSafeInteger(event.seq) && Array.isArray(event.messages)).sort((a, b) => a.seq - b.seq);
+    duplicateInput = conflictingCompletion || new Set(steps.map(step => step.seq)).size !== steps.length;
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       if (step.messages.some((message: Obj) => ids.some(id => toolIds(message).includes(id)))) continue;
       const next = steps[i + 1]?.messages ?? trajectory.find(event => event.type === 'model.completed' && event.runId === run.runId)?.data?.messagesSnapshot;
       if (!Array.isArray(next)) continue;
-      const index = next.findIndex((message: Obj) => message?.role === 'assistant' && ids.every(id => toolIds(message).includes(id)));
+      const index = next.findIndex(sameRequest);
       if (index >= 0 && canonical(next.slice(0, index)) === canonical(step.messages)) {
         const fingerprint = (entry: Obj) => canonical({ system: entry.system, messages: entry.messages, options: entry.options });
         if (steps.filter(entry => fingerprint(entry) === fingerprint(step)).length > 1) duplicateInput = true;

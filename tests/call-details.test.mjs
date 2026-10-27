@@ -145,6 +145,19 @@ test('captured context requires a unique run, unique tool IDs, and an exact witn
   assert.equal(context.source, 'cache_trace');
   assert.equal(context.metadata.seq, 7);
   assert.equal(context.value.system, 'captured system');
+  const different = structuredClone(events[1]);
+  different.data.messagesSnapshot[1].content[1].arguments.command = 'python different.py';
+  await writeFile(path.join(dir, sid + '.trajectory.jsonl'), jsonl([events[0], different]));
+  assert.equal((await get('context')).data.source, 'recorded_context', 'same call ID with different arguments is not evidence for this request');
+  await writeFile(path.join(dir, sid + '.trajectory.jsonl'), jsonl([...events, different]));
+  context = (await get('context')).data;
+  assert.equal(context.source, 'recorded_context', 'conflicting completion snapshots must not select the first one');
+  assert.equal(context.metadata.capturedInput, 'ambiguous');
+  await writeFile(path.join(dir, sid + '.trajectory.jsonl'), jsonl(events));
+  await writeFile(cache, jsonl([step, { ...step, system: 'conflicting system' }]));
+  context = (await get('context')).data;
+  assert.equal(context.source, 'recorded_context', 'duplicate sequence numbers do not identify a unique step');
+  assert.equal(context.metadata.capturedInput, 'ambiguous');
   // A retry with the same prefix makes selection ambiguous.
   await writeFile(cache, jsonl([step, { ...step, seq: 8 }]));
   context = (await get('context')).data;
