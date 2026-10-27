@@ -23,6 +23,16 @@ export interface LinkedToolCall {
 }
 
 const failedStatuses = new Set(['error', 'failed', 'timeout', 'approval-unavailable']);
+
+/** Completed means the process ended; it can still have a failing exit code. */
+export function toolResultFailed(message: { isError?: unknown; details?: { status?: unknown; exitCode?: unknown } }): boolean {
+  const { status, exitCode } = message.details ?? {};
+  // Older logs can omit isError, so retain every explicit failure signal.
+  return (typeof status === 'string' && failedStatuses.has(status))
+    || (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0)
+    || Boolean(message.isError);
+}
+
 const stableJson = (value: unknown) => JSON.stringify(value, (_key, item) =>
   item && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
@@ -187,7 +197,7 @@ export function resolveToolCallLinks(input: RawRecord[]) {
       messageId: record.id, contentIndex, content, timestamp: Number.isFinite(timestamp(record)) ? timestamp(record) : call.timestamp,
       durationMs: typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? duration : null,
       failed: contentIndex === null
-        ? (typeof status === 'string' && failedStatuses.has(status)) || (status === undefined && Boolean(record.message?.isError))
+        ? toolResultFailed(record.message ?? {})
         : Boolean(item?.is_error),
       aborted: status === 'running',
     };

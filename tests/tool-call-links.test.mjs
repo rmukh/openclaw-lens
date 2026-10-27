@@ -13,6 +13,7 @@ const { parseSessionFile } = require('../src/server/parser.ts');
 const { openDb, initSchema, ingestAll } = require('../src/server/db.ts');
 const { ingestAuditEvents } = require('../src/server/audit/audit-parser.ts');
 const debugRouter = require('../src/server/api/debug.ts').default;
+const { sessionsRouter } = require('../src/server/api/sessions.ts');
 const express = require('express');
 const at = Date.UTC(2026, 9, 27, 12);
 const record = (id, parentId, message, offset = 0) => ({ type: 'message', id, parentId,
@@ -198,6 +199,41 @@ test('audit failure rolls back the whole file and leaves its ingestion state ret
   assert.equal(retried.filesProcessed, 1);
   assert.equal(JSON.parse(db.prepare('SELECT arguments FROM tool_calls').get().arguments).command, 'new command with changed data');
   assert.equal(db.prepare('SELECT raw_output FROM audit_events').get().raw_output, 'NEW');
+});
+
+test('completed execution with a nonzero exit code is a failure, including when isError is false', async t => {
+  const { home, db, file, write } = await fixture(t);
+  // OpenClaw 2026.7.1 records a Python argument error as completed + exitCode 1.
+  // Completed describes process termination, not whether the command succeeded.
+  const failed = result('failed-result', 'failed-call', 'failed-request', 'argument --days: must be >= 1');
+  failed.message.details.exitCode = 1;
+  failed.message.isError = true;
+  const unflagged = result('unflagged-result', 'unflagged-call', 'unflagged-request');
+  unflagged.message.details.exitCode = 2;
+  unflagged.message.isError = false;
+  const flagged = result('flagged-result', 'flagged-call', 'flagged-request');
+  flagged.message.isError = true;
+  const recovered = result('recovered-result', 'recovered-call', 'recovered-request');
+  recovered.message.details.exitCode = 0;
+  recovered.message.isError = false;
+  await write([request('failed-request', 'failed-call'), failed,
+    request('unflagged-request', 'unflagged-call'), unflagged,
+    request('flagged-request', 'flagged-call'), flagged,
+    request('recovered-request', 'recovered-call'), recovered]);
+  assert.deepEqual(parseSessionFile(file).toolCalls.map(call => [call.resultMatch, call.resultOutcome, call.success]),
+    [['exact', 'failure', 0], ['exact', 'failure', 0], ['exact', 'failure', 0], ['exact', 'success', 1]]);
+  assert.deepEqual((await ingestAll(db, { clawHome: home })).errors, []);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE result_outcome = 'failure' AND success = 0").get().n, 3);
+  t.mock.method(require('../src/server/paths.ts'), 'getClawHome', () => home);
+  const app = express();
+  app.use('/api/sessions', sessionsRouter(db, home));
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const session = db.prepare('SELECT id FROM sessions').get();
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/${session.id}/trace`);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).turns.flatMap(turn => turn.tools).map(tool => tool.success), [false, false, false, true]);
 });
 
 test('a file changing during ingestion cannot mix tool data and audit output from different snapshots', async t => {
