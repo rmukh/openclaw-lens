@@ -125,7 +125,11 @@ async function capturedContext(home: string, file: string, session: string, sele
     const conflictingCompletion = new Set(completions.map(event => canonical(event.data?.messagesSnapshot))).size !== 1;
     const steps = cache.filter(event => event.sessionId === session && event.runId === run.runId && event.stage === 'stream:context'
       && Number.isSafeInteger(event.seq) && Array.isArray(event.messages)).sort((a, b) => a.seq - b.seq);
-    duplicateInput = conflictingCompletion || new Set(steps.map(step => step.seq)).size !== steps.length;
+    const repeatedRequest = (messages: unknown) => Array.isArray(messages) && ids.some(id =>
+      messages.reduce((count: number, message: Obj) => count + toolIds(message).filter(toolId => toolId === id).length, 0) > 1);
+    duplicateInput = conflictingCompletion || new Set(steps.map(step => step.seq)).size !== steps.length
+      || completions.some(event => repeatedRequest(event.data?.messagesSnapshot))
+      || steps.some(step => repeatedRequest(step.messages));
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       if (step.messages.some((message: Obj) => ids.some(id => toolIds(message).includes(id)))) continue;
@@ -176,11 +180,13 @@ export function callDetailsRouter(db: Database, clawHome?: string): Router {
       const home = clawHome || getClawHome();
       const file = await sessionFile(home, agent, session);
       const records = await readJsonl(file) as RawRecord[];
-      const variants = records.filter(record => record.type === 'message' && record.id === message);
+      // Record IDs identify envelopes, including non-message records. Filtering
+      // by type first would hide an identity conflict from the inspector.
+      const variants = records.filter(record => record.id === message);
       if (!variants.length) { send('missing'); return; }
       if (new Set(variants.map(canonical)).size !== 1) { send('ambiguous'); return; }
       const selected = variants[0];
-      if (selected.message?.role !== 'assistant') { send('ambiguous'); return; }
+      if (selected.type !== 'message' || selected.message?.role !== 'assistant') { send('ambiguous'); return; }
       const links = resolveToolCallLinks(records);
       const call = tool ? links.calls.find(call => call.messageId === message && call.id === tool) : undefined;
       if (tool && !call) { send('missing'); return; }

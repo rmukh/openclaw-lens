@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- Treat transcript IDs reused across record types and requests repeated inside trace snapshots as ambiguous, rather than claiming a unique response or captured input.
 - Reject captured-input matches when tool arguments/names differ, completion snapshots conflict, or stream steps reuse sequence numbers. Preserve recorded-context fallback instead of choosing inconsistent trace evidence.
 - Recognize nonzero tool exit codes and explicit error flags even when OpenClaw reports the execution status as completed. Verified with real Python skill runs, including argument-validation failure and recovery.
 - Keep transcript and audit ingestion in one transaction using a single file snapshot, and retry files after an audit failure. Handle conflicting result revisions, malformed IDs/content, and corrected tool names without stale pairing; exclude runtime-generated messages from user-prompt audit context and cache ancestor context for long runs.

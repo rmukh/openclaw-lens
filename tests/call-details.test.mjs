@@ -38,6 +38,7 @@ async function fixture(t, rows = records) {
   t.after(async () => { await new Promise(resolve => server.close(resolve)); db.close(); await rm(home, { recursive: true, force: true }); });
   const get = async (section, query = {}) => {
     const params = new URLSearchParams({ agent: 'alpha', message: 'a', tool: 'x', section, ...query });
+    if (query.tool === null) params.delete('tool');
     const response = await fetch(`http://127.0.0.1:${server.address().port}/api/debug/session/${sid}/call?${params}`);
     return { code: response.status, data: await response.json(), cacheControl: response.headers.get('cache-control') };
   };
@@ -113,6 +114,13 @@ test('modern result blocks are selected individually and live incomplete lines d
   assert.equal(data.value[0].text, '{"nested":{"value":true}}');
 });
 
+test('an ID reused by a non-message envelope cannot identify a unique LLM response', async t => {
+  const { get, file } = await fixture(t);
+  await writeFile(file, jsonl([...records, { type: 'custom', id: 'a', parentId: 'u', data: 'conflict' }]));
+  assert.equal((await get('response', { tool: null })).data.status, 'ambiguous');
+  assert.equal((await get('response')).data.status, 'ambiguous');
+});
+
 test('archived and removed sources have explicit states; broken ancestry is marked incomplete', async t => {
   const { file, get } = await fixture(t);
   const orphan = structuredClone(a);
@@ -145,6 +153,13 @@ test('captured context requires a unique run, unique tool IDs, and an exact witn
   assert.equal(context.source, 'cache_trace');
   assert.equal(context.metadata.seq, 7);
   assert.equal(context.value.system, 'captured system');
+  const repeated = structuredClone(events[1]);
+  repeated.data.messagesSnapshot.push(a.message, result.message);
+  await writeFile(path.join(dir, sid + '.trajectory.jsonl'), jsonl([events[0], repeated]));
+  context = (await get('context')).data;
+  assert.equal(context.source, 'recorded_context', 'a repeated request in a trace snapshot is not a unique witness');
+  assert.equal(context.metadata.capturedInput, 'ambiguous');
+  await writeFile(path.join(dir, sid + '.trajectory.jsonl'), jsonl(events));
   const different = structuredClone(events[1]);
   different.data.messagesSnapshot[1].content[1].arguments.command = 'python different.py';
   await writeFile(path.join(dir, sid + '.trajectory.jsonl'), jsonl([events[0], different]));
