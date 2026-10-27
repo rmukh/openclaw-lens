@@ -3,7 +3,7 @@
 # openclaw-lens
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-green)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-22%20%7C%2024-green)](https://nodejs.org)
 
 **openclaw-lens combines observability, analytics, and developer tooling for [OpenClaw](https://openclaw.ai) agents — cost tracking, session inspection, profiler, cache trace, and security audit in one local dashboard.**
 
@@ -24,7 +24,7 @@ openclaw-lens is built for this new reality. Cost, not latency, is the dominant 
 ![Overview](./assets/en_screenshot/overview.png)
 
 <details id="more-details">
-<summary>More Details (TL;DR)</summary>
+<summary>More screenshots</summary>
 
 ### Token Usage
 ![Token Usage](./assets/en_screenshot/token.png)
@@ -76,7 +76,7 @@ openclaw-lens is built for this new reality. Cost, not latency, is the dominant 
 ## Features
 
 - **Overview** — KPI strip (cost today, tokens, sessions, errors, cache efficiency), 7-day trend, week-over-week delta, model cost breakdown, active agent list
-- **Token Usage** — 4-dimension cost breakdown (input, output, cache read, cache write) by agent, model, and time period; cache hit rate; cron vs. manual comparison
+- **Token Usage** — token and cost breakdowns for input, output, cache reads, and cache writes by agent, model, and time period; cache hit rate; cron vs. manual comparison; separate recorded LLM-response and tool-call counts, with per-tool details
 - **Agents** — per-agent statistics, cost, session count, and agent memory files
 - **Live Monitor** — real-time agent activity feed via WebSocket proxy to the OpenClaw Gateway
 - **Sessions** — session table with filters by agent, model, date, cost; sorting by last activity, start time, duration, and average tokens per message in either direction, alongside existing sorts; context health indicator; full tool call trace per session
@@ -160,25 +160,30 @@ transcript, session-specific workspace metadata, or agent configuration.
 ---
 
 ## Quick Start
-Required: Node.js 18+. `OPENCLAW_HOME` env var overrides the default `~/.openclaw` data directory.
+
+Use Node.js 22.12 or later in the 22.x series, or Node.js 24.x. Set the
+`OPENCLAW_HOME` environment variable to override the default `~/.openclaw` data directory.
 
 ```bash
 git clone https://github.com/rmukh/openclaw-lens
 cd openclaw-lens
 npm install
-cd src/ui && npm install && cd ../..
+npm install --prefix src/ui
 ```
 
-### For regular production build
+### Production build
+
 ```bash
 npm run build
-npm run build --prefix src/ui
-npm run start
+npm start
 ```
 
-Opens `http://localhost:4242`. No account, no config, no data upload.
+`npm run build` builds both the backend and frontend. `npm start` opens the
+dashboard at <http://localhost:4242>. No account, no additional dashboard
+configuration, and no data upload are required.
 
-### For development purpose
+### Development
+
 ```bash
 npm run dev
 ```
@@ -202,13 +207,10 @@ Demo timestamps are generated at startup, with current token usage included even
 just after midnight. Restart the demo to refresh its dates. A demo left running
 overnight can have no usage in Today or This Week after the calendar rolls over.
 
-Both commands support hot reload. Stop the current development server with
-Ctrl+C before switching modes, since they use the same ports. Run `npm test`
-for the palette, session sorting, and session-file discovery regression checks.
-
-```bash
-npm run build && npm start   # production build
-```
+All development modes support hot reload. Stop the current development server
+with Ctrl+C before switching modes, since they use the same ports. Run `npm test`
+for regression checks, including date filters, recorded counts, session sorting,
+session-file discovery, and live connections.
 
 → [claw-lens.com/development](https://claw-lens.com/development)
 
@@ -220,7 +222,7 @@ openclaw-lens runs entirely on your machine. It reads the files OpenClaw already
 
 Four principles shape the architecture:
 
-- **Zero configuration** — `npx claw-lens-cli` auto-creates the schema, ingests all session data, and opens the browser. The only prerequisite is Node.js.
+- **Zero configuration** — after the initial build, `npm start` automatically creates the database schema, ingests local OpenClaw sessions, and opens the browser. No account or additional dashboard configuration is required.
 - **Cost first** — USD cost is the primary signal, visible per-session, per-model, and per-agent. Token breakdowns are one layer deeper for when users need them.
 - **Local and read-only** — the server binds to `127.0.0.1`, makes no outbound calls, and never modifies agent files. The only file openclaw-lens writes is its own SQLite database.
 - **Rule-based security audit** — every tool call is risk-scored at ingestion time with deterministic rules, not ML. Per-agent behavioral baselines detect anomalies. The rules are transparent — read the code and know exactly why something was flagged.

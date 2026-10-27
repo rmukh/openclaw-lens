@@ -3,7 +3,7 @@
 # openclaw-lens
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-green)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-22%20%7C%2024-green)](https://nodejs.org)
 
 **openclaw-lens 将 Observability、Analytics 与开发者工具融合为一 —— 为 [OpenClaw](https://openclaw.ai) agent 提供成本追踪、Session 分析、Profiler、Cache Trace 和安全审计，全部跑在本地。**
 
@@ -24,7 +24,7 @@ openclaw-lens 就是在这个背景下做的。对 agent 来说，最该盯的�
 ![Overview](./assets/zh_screenshot/zh_overview.png)
 
 <details id="more-details">
-<summary>更多截图（有点长，可以过后再读）</summary>
+<summary>更多截图</summary>
 
 ### Token 用量
 ![Token 用量](./assets/zh_screenshot/zh_token.png)
@@ -76,7 +76,7 @@ openclaw-lens 就是在这个背景下做的。对 agent 来说，最该盯的�
 ## 功能
 
 - **概览** — KPI 一览（今日花费、token 用量、session 数、报错数、缓存效率），7 天走势，周环比，按模型的成本分布，活跃 agent 列表
-- **Token 用量** — 四维成本拆解（input、output、cache read、cache write），支持按 agent、模型、时间段看；缓存命中率；定时任务和手动任务的成本对比
+- **Token 用量** — 按 agent、模型和时间段查看输入、输出、缓存读取和缓存写入的 Token 用量及费用明细；缓存命中率；定时任务与手动任务对比；分别统计已记录的 LLM 回复数和工具调用数，并提供各工具的调用明细
 - **智能体** — 每个 agent 的统计数据、花费、session 数，以及 agent 的记忆文件
 - **实时监控** — 实时 agent 活动流，通过 WebSocket 接 OpenClaw Gateway
 - **会话** — session 列表，可以按 agent、模型、日期、成本筛选；除已有排序外，还支持按最后活跃时间、开始时间、持续时间和每条消息的平均 token 数升序或降序排列；带上下文健康度标识；每个 session 都能展开看完整的 tool call 链路
@@ -99,6 +99,14 @@ openclaw-lens 就是在这个背景下做的。对 agent 来说，最该盯的�
 **按智能体的 Token 用量** 也有独立且相同的时间选择器：今天、本周、最近 7/30/90 天、
 全部时间、按天、按周及自定义范围。用量、费用、占比、会话数和展开的热门会话均使用
 该部分选择的范围。没有匹配用量时仍可调整日期。这两部分的“全部时间”包含全部记录。
+
+这两部分分别显示 **LLM 回复数** 和 **工具调用数**，并提供各工具的调用明细，以及按
+agent、模型、定时/手动任务和展开会话划分的计数。LLM 回复指日志中记录的助手回复，
+包括请求工具的回复，并非已核实的 API 请求数。每个已记录的工具请求计数一次，
+包括失败或未完成的尝试；工具结果不会重复计数。两项计数都按发起回复的日期统计，
+并与 Token 总量使用相同的消息排除规则。零费用回复和缺少用量元数据的回复也会计数。
+这些数据反映已记录的活动，不是服务商的计费统计；OpenClaw 日志中未记录的事件无法统计。
+计数均以精确整数显示。
 
 在会话列表中，用下拉框选择排序字段，点击旁边的箭头按钮切换方向：↑ 为升序，↓ 为降序。
 所有字段都支持两个方向。默认按最后活跃时间降序排列，与原来的“最新”排序一致。
@@ -138,33 +146,37 @@ openclaw agent --agent workspace-2 --session-key agent:workspace-2:run1 --messag
 
 ## 快速开始
 
-```bash
-npx claw-lens-cli
-```
-
-打开 `http://localhost:4242`。不用注册，不用配置，不上传任何数据。
+请使用 Node.js 22.x（22.12 或更高版本）或 Node.js 24.x。设置 `OPENCLAW_HOME`
+环境变量可以指定数据目录，默认是 `~/.openclaw`。
 
 ```bash
-npm install -g claw-lens-cli   # 或者用 npm 全局安装
-claw-lens --port 3000      # 换端口（默认 4242）
-claw-lens --no-open        # 启动时不自动开浏览器
-```
-
-需要 Node.js 18+。设置 `OPENCLAW_HOME` 环境变量可以指定数据目录（默认 `~/.openclaw`）。
-
-更多 CLI 用法见 [claw-lens.com/reference/cli](https://claw-lens.com/reference/cli)。
-
-### 开发者
-
-```bash
-git clone https://github.com/msfirebird/claw-lens.git
-cd claw-lens
+git clone https://github.com/rmukh/openclaw-lens
+cd openclaw-lens
 npm install
-cd src/ui && npm install && cd ../..
+npm install --prefix src/ui
+```
+
+### 生产构建
+
+```bash
+npm run build
+npm start
+```
+
+`npm run build` 同时构建后端和前端。`npm start` 会打开仪表盘
+<http://localhost:4242>。无需注册账号或额外配置仪表盘，也不会上传数据。
+
+### 开发
+
+```bash
 npm run dev
 ```
 
-后端（Express + ts-node-dev，端口 4242）和前端（React + Vite，端口 6060）同时跑，改了 `src/server/` 或 `src/ui/` 下的代码马上生效。
+后端（Express + ts-node-dev，端口 4242）和前端（React + Vite，端口 6060）同时运行，
+支持热更新；修改 `src/server/` 或 `src/ui/` 下的代码会立即生效。
+前端会等待 API 完成会话加载后再启动。开发时请打开 <http://localhost:6060>；
+端口 4242 仅提供 API，即使之前已生成生产构建，也不会在该端口显示旧版仪表盘。
+单独运行 `npm run dev:ui` 也需要后端已启动。
 
 运行 `npm run dev:local` 可使用独立的开发数据库。前端地址为
 <http://localhost:6060>，API 地址为 <http://localhost:4242>。该模式读取本地
@@ -174,9 +186,12 @@ OpenClaw 会话，将数据库保存到 `.dev/claw-lens.db`，与已安装仪表
 包括命名运行、缺少元数据的旧会话、自定义工具名和失败的工具调用。
 模拟日志保存在 `.dev/demo-openclaw/`，数据库保存在
 `.dev/demo.db`。该模式不会执行工具，也不会修改本地 OpenClaw 安装。
+模拟数据的时间戳在启动时生成，即使刚过午夜，也会包含当前的 Token 用量。
+如需更新模拟数据的日期，请重启演示模式。演示模式跨夜运行后，“今天”可能没有用量；
+跨入新的一周后，“本周”也可能没有用量。
 
-两个命令均支持热更新。切换模式前请按 Ctrl+C 停止当前开发服务，因为它们使用相同端口。
-运行 `npm test` 可检查配色、会话排序及会话日志文件发现的回归测试。
+所有开发模式均支持热更新。切换模式前请按 Ctrl+C 停止当前开发服务，因为它们使用相同端口。
+运行 `npm test` 可执行回归检查，覆盖日期筛选、记录计数、会话排序、会话日志文件发现和实时连接等功能。
 
 → [claw-lens.com/development](https://claw-lens.com/development)
 
@@ -188,7 +203,7 @@ openclaw-lens 完全跑在本地。它读 OpenClaw 写到磁盘上的文件—�
 
 四个核心原则：
 
-- **零配置** — `npx claw-lens-cli` 自动建表、导入数据、打开浏览器。装了 Node.js 就能用。
+- **零配置** — 完成首次构建后，`npm start` 会自动创建数据库表、导入本地 OpenClaw 会话并打开浏览器，无需注册账号或额外配置仪表盘。
 - **成本优先** — 美元花费是最醒目的数字，session、模型、agent 三个维度都能看到。Token 明细在下一层，想看随时点进去。
 - **本地只读** — 服务只监听 `127.0.0.1`，不往外发请求，不碰 agent 的文件。openclaw-lens 唯一写的东西是自己的 SQLite 数据库。
 - **规则驱动的安全审计** — 每个 tool call 入库时就用确定性规则打分，不靠机器学习。每个 agent 有自己的行为基线用来检测异常。规则全是透明的——看代码就知道为什么会被标记。
