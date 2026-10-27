@@ -8,6 +8,7 @@ import {
   readCacheTraceAllStages,
 } from './cache-trace-reader';
 import type { ResultMatch } from '../tool-call-links';
+import { callDetailsRouter } from './call-details';
 
 /**
  * Estimate token count from a string. Uses char/4 for ASCII-heavy text
@@ -21,8 +22,9 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / ratio);
 }
 
-export default function debugRouter(db: Database): Router {
+export default function debugRouter(db: Database, clawHome?: string): Router {
   const r = Router();
+  r.use(callDetailsRouter(db, clawHome));
 
   // ── GET /api/debug/status ────────────────────────────────────────────────────
   r.get('/status', (_req, res) => {
@@ -195,6 +197,7 @@ export default function debugRouter(db: Database): Router {
 
     interface MsgRow {
       id: string;
+      agent_name: string;
       timestamp: number;
       role: string;
       input_tokens: number;
@@ -206,6 +209,7 @@ export default function debugRouter(db: Database): Router {
       error_message: string | null;
     }
     interface TcRow {
+      agent_name: string;
       result_message_id: string | null;
       result_match: ResultMatch;
       result_outcome: 'success' | 'failure' | 'unknown';
@@ -227,7 +231,7 @@ export default function debugRouter(db: Database): Router {
     }
 
     const allMsgs = db.prepare(`
-      SELECT id, timestamp, role, input_tokens, output_tokens, cache_read, cache_write, cost_total, stop_reason, error_message
+      SELECT id, agent_name, timestamp, role, input_tokens, output_tokens, cache_read, cache_write, cost_total, stop_reason, error_message
       FROM messages WHERE session_id = ? ORDER BY timestamp ASC
     `).all(sid) as MsgRow[];
 
@@ -376,6 +380,7 @@ export default function debugRouter(db: Database): Router {
 
         return {
           id: tc.id,
+          agent_name: tc.agent_name,
           message_id: tc.message_id,
           result_message_id: tc.result_message_id,
           result_match: tc.result_match,
@@ -420,6 +425,7 @@ export default function debugRouter(db: Database): Router {
 
       return {
         seq: i + 1,
+        agent_name: msg.agent_name,
         message_id:    msg.id,        // assistant message ID — for content lookup
         user_message_id: userMsg?.id ?? null,  // preceding user message ID
         start_ms:      cStart,       // compressed — used by Gantt

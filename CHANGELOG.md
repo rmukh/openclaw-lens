@@ -4,6 +4,7 @@
 
 ### Added
 
+- Inspect individual Execution Gantt tool/LLM calls in an on-demand side panel, with foldable Readable/Tree views, original Raw records, JSON-in-text expansion, copy/wrap controls, and progressive payload previews. Read full recorded results for custom tools independently of audit previews; distinguish captured step input from reconstructed conversation and shared run context. Include English/Chinese labels and richer demo payloads/traces.
 - Separate recorded LLM-response and tool-call counts in Token Usage's Breakdown and Token Usage by Agent sections, with per-tool details, agent/model/cron/manual counts, and counts for expanded sessions. Each section follows its own selected dates; counts do not estimate provider billing.
 - Give Token Usage by Agent the same independent period picker as Breakdown, including Monday-based This Week, day/week navigation, and inclusive custom ranges. Expanded sessions follow the selected bounds, and empty ranges retain usable controls.
 - “This Week (Mon–today)” and custom calendar ranges in Token Usage's Breakdown section. All agent/model/cron breakdowns use the selected interval, with timezone-aware boundaries and inclusive custom end dates.
