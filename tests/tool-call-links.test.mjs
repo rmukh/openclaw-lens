@@ -273,6 +273,57 @@ test('re-ingestion updates a corrected tool name rather than pairing new audit d
   assert.equal(db.prepare('SELECT tool_name FROM audit_events').get().tool_name, 'read');
 });
 
+async function timelineFor(t, db, id) {
+  const app = express();
+  app.use('/api/debug', debugRouter(db));
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  return (await fetch(`http://127.0.0.1:${server.address().port}/api/debug/session/${id}/timeline`)).json();
+}
+
+test('Gantt places measured tools before their result timestamps and detects parallel execution with different finish times', async t => {
+  const { home, db, id, write } = await fixture(t);
+  const a = request('a', 'short', {}, 'user');
+  a.message.content.push({ type: 'toolCall', id: 'long', name: 'exec', arguments: {} });
+  const short = result('short-result', 'short', 'a', 'short output', 10100);
+  short.message.details.durationMs = 10000;
+  const long = result('long-result', 'long', 'short-result', 'long output', 20100);
+  long.message.details.durationMs = 20000;
+  await write([record('user', null, { role: 'user', content: 'Run both tools' }, -100), a, short, long,
+    record('done', 'long-result', { role: 'assistant', stopReason: 'stop', content: [] }, 20200)]);
+  assert.deepEqual((await ingestAll(db, { clawHome: home })).errors, []);
+  const data = await timelineFor(t, db, id);
+  const turn = data.turns[0];
+  assert.deepEqual(turn.tool_calls.map(tool => tool.wall_start_ms), [200, 200]);
+  assert.deepEqual(turn.tool_calls.map(tool => tool.start_ms), [200, 200]);
+  assert.equal(turn.tool_time_ms, 20000);
+  assert.equal(turn.tool_calls[0].total_lanes, 2);
+  assert.notEqual(turn.tool_calls[0].lane, turn.tool_calls[1].lane);
+  // With the same finish time but a shorter duration, the second tool starts
+  // exactly when the first ends and should reuse its lane.
+  db.prepare("UPDATE tool_calls SET duration_ms = 10000 WHERE id = 'long'").run();
+  const sequential = (await timelineFor(t, db, id)).turns[0];
+  assert.deepEqual(sequential.tool_calls.map(tool => tool.wall_start_ms), [200, 10200]);
+  assert.equal(sequential.tool_calls[0].total_lanes, 1);
+  assert.equal(sequential.tool_calls[0].lane, sequential.tool_calls[1].lane);
+});
+
+test('Gantt does not compress known tool execution as idle, but still compresses a subsequent user pause', async t => {
+  const { home, db, id, write } = await fixture(t);
+  const output = result('r', 'call', 'a', 'completed', 360100);
+  output.message.details.durationMs = 360000;
+  await write([record('user', null, { role: 'user', content: 'Run tool' }, -100), request('a', 'call', {}, 'user'), output,
+    record('next-user', 'r', { role: 'user', content: 'After a pause' }, 960100),
+    record('done', 'next-user', { role: 'assistant', stopReason: 'stop', content: [] }, 960200)]);
+  assert.deepEqual((await ingestAll(db, { clawHome: home })).errors, []);
+  const data = await timelineFor(t, db, id);
+  assert.equal(data.idle_gaps_compressed, 1);
+  assert.equal(data.turns[0].tool_calls[0].start_ms, 200);
+  assert.equal(data.turns[0].tool_calls[0].duration_ms, 360000);
+  assert.equal(data.turns[1].start_ms, 361200);
+});
+
 test('timeline requires all identity fields and refuses duplicate, stale, legacy and cross-agent audit matches', async t => {
   const { home, db, id, write } = await fixture(t);
   await write([request('a'), result('r', 'call', 'a', 'CORRECT', 90000), request('pending', 'pending')]);

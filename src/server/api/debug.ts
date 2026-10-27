@@ -294,6 +294,11 @@ export default function debugRouter(db: Database, clawHome?: string): Router {
     }
 
     const sessionStart = allMsgs[0].timestamp;
+    // The parser stores result/completion time in tool_calls.timestamp.
+    // Recover execution intervals before assigning lanes or compressing gaps.
+    const toolStart = (tc: TcRow) => Math.max(sessionStart, tc.timestamp - Math.max(0, tc.duration_ms ?? 0));
+    const activeTools = allTcs.filter(tc => (tc.duration_ms ?? 0) > 0)
+      .map(tc => ({ start: toolStart(tc), end: tc.timestamp })).sort((a, b) => a.start - b.start);
 
     // ── Build idle-gap compression map ────────────────────────────────────────
     // For each wall-clock timestamp, cTs() returns the compressed equivalent.
@@ -302,7 +307,7 @@ export default function debugRouter(db: Database, clawHome?: string): Router {
     const allTimestamps = [
       ...allMsgs.map(m => m.timestamp),
       ...allTcs.map(tc => tc.timestamp),
-      ...allTcs.filter(tc => tc.duration_ms).map(tc => tc.timestamp + (tc.duration_ms ?? 0)),
+      ...allTcs.map(toolStart),
     ].sort((a, b) => a - b);
     // Deduplicate nearby timestamps (within 10ms)
     const dedupedTs: number[] = [];
@@ -313,9 +318,12 @@ export default function debugRouter(db: Database, clawHome?: string): Router {
     }
     interface GapInfo { after_ts: number; savings_ms: number }
     const gaps: GapInfo[] = [];
+    let activeIndex = 0;
     for (let i = 0; i < dedupedTs.length - 1; i++) {
+      while (activeIndex < activeTools.length && activeTools[activeIndex].end <= dedupedTs[i]) activeIndex++;
+      const executing = activeIndex < activeTools.length && activeTools[activeIndex].start < dedupedTs[i + 1];
       const gap = dedupedTs[i + 1] - dedupedTs[i];
-      if (gap > IDLE_THRESHOLD_MS) {
+      if (gap > IDLE_THRESHOLD_MS && !executing) {
         gaps.push({ after_ts: dedupedTs[i], savings_ms: gap - IDLE_DISPLAY_MS });
       }
     }
@@ -345,20 +353,18 @@ export default function debugRouter(db: Database, clawHome?: string): Router {
       const tools = tcByMsg.get(msg.id) ?? [];
 
       // ── Per-tool duration with parallel detection ──
-      // Each tool now has its own wall timestamp and individual duration_ms from the parser.
-      // Detect parallel: if tool wall timestamps are within 200ms of each other, they ran in parallel.
+      // Use measured execution intervals, including tools with different finish times.
       const cMsgStart = cTs(msg.timestamp); // compressed start of tool block
 
       // Sort tools by wall timestamp to detect parallelism
-      const sortedTools = [...tools].sort((a, b) => a.timestamp - b.timestamp);
+      const sortedTools = [...tools].sort((a, b) => toolStart(a) - toolStart(b));
 
       // Group into parallel "lanes": tools that overlap in time run in parallel
       interface ToolLane { tc: TcRow; wallStart: number; wallEnd: number; lane: number }
       const lanes: ToolLane[] = [];
       for (const tc of sortedTools) {
-        const dur = Math.min(tc.duration_ms ?? 0, MAX_TOOL_DUR_MS);
-        const wallStart = tc.timestamp;
-        const wallEnd = wallStart + dur;
+        const wallStart = toolStart(tc);
+        const wallEnd = tc.timestamp;
 
         // Find the first lane where this tool doesn't overlap
         let lane = 0;
@@ -368,15 +374,10 @@ export default function debugRouter(db: Database, clawHome?: string): Router {
         lanes.push({ tc, wallStart, wallEnd, lane });
       }
 
-      // Compute compressed start for each tool relative to the tool block start
-      const toolBlockWallStart = sortedTools.length > 0 ? sortedTools[0].timestamp : msg.timestamp;
       const totalLanes = lanes.length > 0 ? Math.max(...lanes.map(l => l.lane)) + 1 : 0;
 
       const toolSlices = lanes.map(({ tc, wallStart, lane }) => {
         const durMs = Math.min(tc.duration_ms ?? 0, MAX_TOOL_DUR_MS);
-        const offsetFromBlockStart = Math.max(0, wallStart - toolBlockWallStart);
-        // Compress the offset (cap at idle threshold)
-        const compressedOffset = Math.min(offsetFromBlockStart, IDLE_THRESHOLD_MS);
 
         return {
           id: tc.id,
@@ -386,8 +387,8 @@ export default function debugRouter(db: Database, clawHome?: string): Router {
           result_match: tc.result_match,
           audit_match: tc.audit_match,
           tool_name: tc.tool_name,
-          start_ms: cMsgStart + compressedOffset,      // compressed coordinates
-          wall_start_ms: tc.timestamp - sessionStart,
+          start_ms: cTs(wallStart),
+          wall_start_ms: wallStart - sessionStart,
           duration_ms: Math.max(durMs, 100),             // min 100 ms so bar is visible
           success: tc.result_match === 'exact' && tc.result_outcome !== 'unknown' ? Boolean(tc.success) : null,
           lane,                                           // for vertical stacking in Gantt
