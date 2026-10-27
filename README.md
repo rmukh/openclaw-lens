@@ -160,31 +160,21 @@ transcript, session-specific workspace metadata, or agent configuration.
 ---
 
 ## Quick Start
+Required: Node.js 18+. `OPENCLAW_HOME` env var overrides the default `~/.openclaw` data directory.
 
 ```bash
-npx claw-lens-cli
+git clone https://github.com/rmukh/openclaw-lens
+cd claw-lens
+npm install
+cd src/ui && npm install && cd ../..
+npm run dev
 ```
 
 Opens `http://localhost:4242`. No account, no config, no data upload.
 
 ```bash
-npm install -g claw-lens-cli   # or install globally
 claw-lens --port 3000      # custom port (default: 4242)
 claw-lens --no-open        # suppress auto-open browser
-```
-
-Requires Node.js 18+. `OPENCLAW_HOME` env var overrides the default `~/.openclaw` data directory.
-
-For more CLI options, see [claw-lens.com/reference/cli](https://claw-lens.com/reference/cli).
-
-### For Developers
-
-```bash
-git clone https://github.com/msfirebird/claw-lens.git
-cd claw-lens
-npm install
-cd src/ui && npm install && cd ../..
-npm run dev
 ```
 
 Runs backend (Express + ts-node-dev, port 4242) and frontend (React + Vite, port 6060) concurrently with hot reload. Changes to `src/server/` or `src/ui/` apply instantly.
