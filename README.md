@@ -164,17 +164,23 @@ Required: Node.js 18+. `OPENCLAW_HOME` env var overrides the default `~/.opencla
 
 ```bash
 git clone https://github.com/rmukh/openclaw-lens
-cd claw-lens
+cd openclaw-lens
 npm install
 cd src/ui && npm install && cd ../..
-npm run dev
+```
+
+### For regular production build
+```bash
+npm run build
+npm run build --prefix src/ui
+npm run start
 ```
 
 Opens `http://localhost:4242`. No account, no config, no data upload.
 
+### For development purpose
 ```bash
-claw-lens --port 3000      # custom port (default: 4242)
-claw-lens --no-open        # suppress auto-open browser
+npm run dev
 ```
 
 Runs backend (Express + ts-node-dev, port 4242) and frontend (React + Vite, port 6060) concurrently with hot reload. Changes to `src/server/` or `src/ui/` apply instantly.
