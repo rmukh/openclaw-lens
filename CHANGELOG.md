@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- Keep transcript and audit ingestion in one transaction using a single file snapshot, and retry files after an audit failure. Handle conflicting result revisions, malformed IDs/content, and corrected tool names without stale pairing; exclude runtime-generated messages from user-prompt audit context and cache ancestor context for long runs.
+- Pair execution Gantt tool results and audit details by agent/session/message/call IDs instead of tool-name/timestamp proximity. Share legacy/modern transcript matching between parsers, resolve reused IDs through parent-message ancestry, and show missing or ambiguous outcomes as Unknown. The additive migration preserves old audit records and dismissed findings; legacy audit details remain unlinked until normal re-ingestion.
 - Avoid aborting live WebSocket handshakes during React development checks or page navigation, preventing repeated Windows `ECONNABORTED` proxy errors while keeping reconnects and live updates working.
 - Keep the development dashboard on port 6060, wait for API readiness before starting Vite, and stop both development processes when either exits. Use the backend's IPv4 address for HTTP/WebSocket proxying.
 - Locate OpenClaw through Windows npm shims as well as Unix executables, without printing a missing `which` error on Windows.

@@ -913,6 +913,12 @@
     "runsTooltipChangeRestart": "Restart the gateway after changing."
   },
   "sessionTimeline": {
+    "outcomeUnknown": "Unknown",
+    "resultMissing": "No result linked by ID. Execution outcome is unknown.",
+    "resultAmbiguous": "Result identity is ambiguous; no result was selected.",
+    "auditUnlinked": "No audit details linked by ID.",
+    "auditAmbiguous": "Audit identity is ambiguous; audit details are hidden.",
+    "auditUnlinkedHelp": "Audit details require matching agent, session, assistant-message, tool-call and result-message IDs. Legacy audit records remain unlinked until their logs are normally re-ingested. Timestamp estimates are not used.",
     "userPrompt": "User Prompt",
     "assistantResponse": "Assistant Response",
     "tok": "tok",

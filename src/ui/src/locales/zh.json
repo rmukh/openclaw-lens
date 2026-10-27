@@ -913,6 +913,12 @@
     "runsTooltipChangeRestart": "修改后需重启网关。"
   },
   "sessionTimeline": {
+    "outcomeUnknown": "未知",
+    "resultMissing": "没有通过 ID 关联的工具结果，执行状态未知。",
+    "resultAmbiguous": "工具结果的身份存在歧义，未选择任何结果。",
+    "auditUnlinked": "没有通过 ID 关联的审计详情。",
+    "auditAmbiguous": "审计记录的身份存在歧义，已隐藏审计详情。",
+    "auditUnlinkedHelp": "审计详情必须匹配智能体、会话、助手消息、工具调用和结果消息的 ID。旧审计记录在日志正常重新导入前保持未关联状态，不使用时间戳估算。",
     "userPrompt": "用户提示",
     "assistantResponse": "助手回复",
     "tok": "tok",

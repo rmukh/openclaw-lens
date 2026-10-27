@@ -22,7 +22,11 @@ interface ToolSlice {
   start_ms: number;       // compressed — for Gantt positioning
   wall_start_ms: number;  // wall clock — for table display
   duration_ms: number;
-  success: boolean;
+  success: boolean | null;
+  message_id: string;
+  result_message_id: string | null;
+  result_match: 'exact' | 'missing' | 'ambiguous';
+  audit_match: 'exact' | 'unlinked' | 'ambiguous';
   lane: number;            // vertical lane index (0-based) for parallel tools
   total_lanes: number;     // how many parallel lanes in this turn
   arguments: string | null;
@@ -88,8 +92,8 @@ function stopMeta(raw: string | null): StopMeta {
   }
 }
 function StopPill({ reason }: { reason: string | null }) {
-  if (!reason) return null;
   const { t } = useTranslation();
+  if (!reason) return null;
   const { label, fg, bg } = stopMeta(reason);
   const displayLabel = t('sessionTimeline.stopLabel' + reason.charAt(0).toUpperCase() + reason.slice(1), { defaultValue: label });
   return (
@@ -332,7 +336,7 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
           {turn.tool_calls.map(tc => (
             <div
               key={tc.id}
-              title={`${tc.tool_name}: ${fmtMs(tc.duration_ms)} · ${tc.success ? '✓' : '✗'}`}
+              title={`${tc.tool_name}: ${tc.success === null ? t('sessionTimeline.outcomeUnknown') : fmtMs(tc.duration_ms)} · ${tc.success === null ? '—' : tc.success ? '✓' : '✗'}`}
               style={{
                 position: 'absolute',
                 left: pct(tc.start_ms, duration),
@@ -343,7 +347,7 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                 ...toolStyles.get(tc.tool_name),
                 borderRadius: 3,
                 zIndex: 2,
-                boxShadow: !tc.success ? `0 0 0 2px ${ERROR_COLOR}` : 'none',
+                boxShadow: tc.success === false ? `0 0 0 2px ${ERROR_COLOR}` : 'none',
               }}
             />
           ))}
@@ -499,10 +503,10 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
           {turn.tool_calls.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {turn.tool_calls.map((tc, idx) => (
-                <div key={tc.id} style={{
+                <div key={tc.id} data-tool-call-id={tc.id} data-message-id={tc.message_id} data-result-match={tc.result_match} data-audit-match={tc.audit_match} style={{
                   background: 'rgba(0,0,0,0.22)',
-                  border: `1px solid ${tc.success ? 'rgba(255,255,255,0.07)' : 'rgba(239,68,68,0.35)'}`,
-                  borderLeft: `3px solid ${tc.success ? toolStyles.get(tc.tool_name)?.backgroundColor : ERROR_COLOR}`,
+                  border: `1px solid ${tc.success === false ? 'rgba(239,68,68,0.35)' : 'rgba(255,255,255,0.07)'}`,
+                  borderLeft: `3px solid ${tc.success === false ? ERROR_COLOR : toolStyles.get(tc.tool_name)?.backgroundColor}`,
                   borderRadius: 4,
                   padding: '8px 10px',
                 }}>
@@ -516,13 +520,23 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                         {tc.target}
                       </span>
                     )}
-                    <span style={{ fontSize: 10, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtMs(tc.duration_ms)}</span>
-                    <span style={{ fontSize: 10, color: tc.success ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                      {tc.success ? t('sessionTimeline.ok') : t('sessionTimeline.err')}
+                    <span style={{ fontSize: 10, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{tc.success === null ? '—' : fmtMs(tc.duration_ms)}</span>
+                    <span style={{ fontSize: 10, color: tc.success === null ? 'var(--muted)' : tc.success ? '#4ade80' : '#f87171', fontWeight: 600 }}>
+                      {tc.success === null ? t('sessionTimeline.outcomeUnknown') : tc.success ? t('sessionTimeline.ok') : t('sessionTimeline.err')}
                     </span>
                     <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginLeft: 'auto' }}>#{idx + 1}</span>
                   </div>
                   {/* Natural-language summary — only for known tools */}
+                  {tc.result_match !== 'exact' && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)' }}>
+                      {t(tc.result_match === 'ambiguous' ? 'sessionTimeline.resultAmbiguous' : 'sessionTimeline.resultMissing')}
+                    </div>
+                  )}
+                  {tc.audit_match !== 'exact' && (
+                    <div title={t('sessionTimeline.auditUnlinkedHelp')} style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)' }}>
+                      {t(tc.audit_match === 'ambiguous' ? 'sessionTimeline.auditAmbiguous' : 'sessionTimeline.auditUnlinked')}
+                    </div>
+                  )}
                   {toolSummary(tc.tool_name, tc.raw_input, t) && (
                     <div style={{
                       fontSize: 11, color: 'var(--muted)', marginTop: 4,
@@ -634,7 +648,6 @@ function JsonView({ raw, maxHeight = 180 }: { raw: string; maxHeight?: number })
         maxHeight,
         overflowY: 'auto',
       }}
-      // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: highlighted }}
     />
   );

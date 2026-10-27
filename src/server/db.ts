@@ -74,6 +74,9 @@ export function initSchema(db: Database.Database): void {
       duration_ms INTEGER,
       success     INTEGER NOT NULL DEFAULT 1,
       arguments   TEXT,
+      result_message_id TEXT,
+      result_match TEXT NOT NULL DEFAULT 'missing',
+      result_outcome TEXT NOT NULL DEFAULT 'unknown',
       PRIMARY KEY (id, message_id)
     );
 
@@ -108,6 +111,9 @@ export function initSchema(db: Database.Database): void {
       risk_score INTEGER DEFAULT 0,
       raw_input TEXT,
       raw_output TEXT,
+      tool_call_id TEXT,
+      message_id TEXT,
+      result_message_id TEXT,
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
     CREATE INDEX IF NOT EXISTS idx_audit_agent   ON audit_events(agent_id, timestamp);
@@ -155,6 +161,17 @@ export function initSchema(db: Database.Database): void {
   `);
 
   // Migrations for existing DBs
+  // Identity-only migration: preserve ingest state, audit history and dismissals.
+  for (const [table, columns] of [
+    ['tool_calls', [['result_message_id', 'TEXT'], ['result_match', "TEXT NOT NULL DEFAULT 'missing'"], ['result_outcome', "TEXT NOT NULL DEFAULT 'unknown'"]]],
+    ['audit_events', [['tool_call_id', 'TEXT'], ['message_id', 'TEXT'], ['result_message_id', 'TEXT']]],
+  ] as const) {
+    const existing = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(column => column.name));
+    for (const [column, definition] of columns) {
+      if (!existing.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_audit_tool_identity ON audit_events(agent_id, session_id, message_id, tool_call_id)');
   // Drop alert tables (removed feature)
   try { db.exec(`DROP TABLE IF EXISTS alert_history`); } catch { /* ignore */ }
   try { db.exec(`DROP TABLE IF EXISTS alert_routing_policies`); } catch { /* ignore */ }
@@ -309,24 +326,26 @@ export async function ingestAll(db: Database.Database, opts: IngestOptions = {})
 
     try {
       const parsed = parseSessionFile(f);
-      ingestSession(db, parsed.sessions, parsed.messages, parsed.toolCalls);
+      let eventsInserted = 0;
+      let findingsInserted = 0;
+      // A file's transcript, audit data and cache marker are one commit.
+      // An audit failure must not expose new arguments with stale audit output
+      // or mark the failed file as successfully ingested.
+      db.transaction(() => {
+        ingestSession(db, parsed.sessions, parsed.messages, parsed.toolCalls);
+        for (const session of parsed.sessions) {
+          const auditResult = ingestAuditEvents(db, f, session.id, session.agentName, parsed.toolCallLinks);
+          eventsInserted += auditResult.eventsInserted;
+          findingsInserted += auditResult.findingsInserted;
+        }
+        upsertState.run(f, mtimeMs, sizeBytes, Date.now());
+      })();
       result.messagesInserted += parsed.messages.length;
       result.toolCallsInserted += parsed.toolCalls.length;
       result.sessionsUpserted += parsed.sessions.length;
-
-      // P1: Audit ingestion (per-session)
-      for (const session of parsed.sessions) {
-        try {
-          const auditResult = ingestAuditEvents(db, f, session.id, session.agentName);
-          result.auditEventsInserted += auditResult.eventsInserted;
-          result.auditFindingsInserted += auditResult.findingsInserted;
-        } catch (auditErr) {
-          result.errors.push(`audit failed: ${f}: ${String(auditErr)}`);
-        }
-      }
-
+      result.auditEventsInserted += eventsInserted;
+      result.auditFindingsInserted += findingsInserted;
       result.filesProcessed++;
-      upsertState.run(f, mtimeMs, sizeBytes, Date.now());
     } catch (err) {
       result.errors.push(`parse/ingest failed: ${f}: ${String(err)}`);
     }
@@ -396,12 +415,16 @@ function ingestSession(
   `);
 
   const upsertToolCall = db.prepare(`
-    INSERT INTO tool_calls (id, message_id, session_id, agent_name, timestamp, tool_name, duration_ms, success, arguments)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tool_calls (id, message_id, session_id, agent_name, timestamp, tool_name, duration_ms, success, arguments, result_message_id, result_match, result_outcome)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id, message_id) DO UPDATE SET
       agent_name = excluded.agent_name,
       timestamp = excluded.timestamp,
       arguments = excluded.arguments,
+      tool_name = excluded.tool_name,
+      result_message_id = excluded.result_message_id,
+      result_match = excluded.result_match,
+      result_outcome = excluded.result_outcome,
       duration_ms = excluded.duration_ms,
       success = excluded.success
   `);
@@ -420,7 +443,7 @@ function ingestSession(
     }
     for (const tc of toolCalls) {
       upsertToolCall.run(tc.id, tc.messageId, tc.sessionId, tc.agentName,
-        tc.timestamp, tc.toolName, tc.durationMs, tc.success, tc.arguments ?? null);
+        tc.timestamp, tc.toolName, tc.durationMs, tc.success, tc.arguments ?? null, tc.resultMessageId, tc.resultMatch, tc.resultOutcome);
     }
   });
 

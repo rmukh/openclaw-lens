@@ -117,6 +117,16 @@ In Sessions, choose the sort field in the dropdown and click the adjacent arrow
 button to switch between ↑ ascending and ↓ descending. Direction applies to every
 field. Last active is the default and includes the former Newest sort behavior.
 
+The execution Gantt links tool results and audit details by their recorded IDs,
+including the agent, session, originating assistant message, and tool call.
+Repeated call IDs are resolved through the transcript's parent-message links;
+timestamps and tool names are never used to guess a match. Missing or ambiguous
+results show an unknown outcome, and unlinked audit details remain hidden.
+Existing audit records and dismissed findings are preserved during the schema
+upgrade. Older audit records without IDs remain unlinked until their source logs
+are normally re-ingested. Audit payload limits and tool coverage are unchanged;
+this does not add full LLM-context capture or an expandable JSON viewer.
+
 The activity badge describes the latest recorded turn. A final `stop`, `error`,
 `aborted`, or `length` response becomes **Idle** immediately after ingestion.
 Recent user messages awaiting a reply and unfinished tool turns show **In progress**

@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import Database from 'better-sqlite3';
+import { resolveToolCallLinks, toolContentText } from '../tool-call-links';
+import type { RawRecord } from '../parser';
 import { isSensitivePath } from './sensitive-paths';
 import { scanForSensitiveData } from './sensitive-data';
 import { scanForInjection } from './injection-scanner';
@@ -15,7 +17,13 @@ const AUDIT_TOOLS = new Set([
   'exec', 'bash', 'image', 'computer',
 ]);
 
-interface AuditEvent {
+interface AuditIdentity {
+  tool_call_id: string;
+  message_id: string;
+  result_message_id: string;
+}
+
+interface AuditEvent extends AuditIdentity {
   session_id: string;
   agent_id: string;
   timestamp: number;
@@ -45,53 +53,23 @@ export function ingestAuditEvents(
   db: Database.Database,
   filePath: string,
   sessionId: string,
-  agentId: string
+  agentId: string,
+  sourceLinks?: ReturnType<typeof resolveToolCallLinks>
 ): { eventsInserted: number; findingsInserted: number } {
-  const raw = fs.readFileSync(filePath, 'utf-8');
-  const lines = raw.split('\n').filter(Boolean);
-
   const baseline = getBaseline(db, agentId);
   const knownDomains = baseline?.known_domains || [];
 
-  // Build toolCall map: id → { name, args, ts, user_context }
-  const toolCallMap: Record<string, { name: string; args: Record<string, unknown>; ts: number; user_context: string }> = {};
-
-  let currentUserContext = '';
-
-  for (const line of lines) {
-    let record: Record<string, unknown>;
-    try { record = JSON.parse(line); } catch { continue; }
-    if (record.type !== 'message') continue;
-
-    const msg = record.message as Record<string, unknown> | undefined;
-    if (!msg) continue;
-
-    if (msg.role === 'user' && Array.isArray(msg.content)) {
-      const texts = (msg.content as Record<string, unknown>[])
-        .filter(c => c.type === 'text')
-        .map(c => String(c.text || '').trim())
-        .filter(Boolean)
-        .join('\n');
-      if (texts) {
-        currentUserContext = texts.slice(0, 600);
-      }
-    } else if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-      const ts = (msg.timestamp as number) || new Date(record.timestamp as string).getTime();
-      for (const item of msg.content as Record<string, unknown>[]) {
-        if ((item.type === 'toolCall' || item.type === 'tool_use') && item.id && item.name) {
-          toolCallMap[item.id as string] = {
-            name: item.name as string,
-            args: (item.arguments as Record<string, unknown>) || {},
-            ts,
-            user_context: currentUserContext,
-          };
-        }
-      }
+  const records: RawRecord[] = [];
+  if (!sourceLinks) {
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      try { records.push(JSON.parse(line)); } catch { /* Ignore incomplete JSONL lines. */ }
     }
   }
+  const links = sourceLinks ?? resolveToolCallLinks(records);
 
   // Pass 2: match tool results, collect raw events with flags (no risk score yet)
-  interface RawEvent {
+  interface RawEvent extends AuditIdentity {
     session_id: string;
     agent_id: string;
     timestamp: number;
@@ -110,25 +88,18 @@ export function ingestAuditEvents(
   const externalCalls: { timestamp: number; target: string; rawInput: string }[] = [];
 
   // Pre-compute total auditable tool calls for anomaly_volume detection
-  const totalAuditToolCalls = Object.values(toolCallMap).filter(c => AUDIT_TOOLS.has(c.name)).length;
+  const totalAuditToolCalls = links.calls.filter(call => AUDIT_TOOLS.has(call.name)).length;
 
-  for (const line of lines) {
-    let record: Record<string, unknown>;
-    try { record = JSON.parse(line); } catch { continue; }
-    if (record.type !== 'message') continue;
-
-    const msg = record.message as Record<string, unknown> | undefined;
-    if (!msg || msg.role !== 'toolResult') continue;
-
-    const toolCallId = msg.toolCallId as string | undefined;
-    if (!toolCallId) continue;
-    const call = toolCallMap[toolCallId];
-    if (!call) continue;
-    if (!AUDIT_TOOLS.has(call.name)) continue;
-
-    const contentArr = Array.isArray(msg.content) ? msg.content as Record<string, unknown>[] : [];
-    const outputText = contentArr.map(c => String(c.text || c.content || '')).join('\n');
-    const output = outputText.slice(0, 2048);
+  for (const linked of links.calls) {
+    if (linked.match !== 'exact' || !linked.result || !AUDIT_TOOLS.has(linked.name)) continue;
+    const call = {
+      name: linked.name,
+      args: linked.args && typeof linked.args === 'object' && !Array.isArray(linked.args)
+        ? linked.args as Record<string, unknown> : {},
+      ts: linked.timestamp,
+      user_context: linked.userContext,
+    };
+    const output = toolContentText(linked.result.content).slice(0, 2048);
 
     const target = resolveTarget(call.name, call.args);
     const eventType = resolveEventType(call.name, call.args);
@@ -161,6 +132,9 @@ export function ingestAuditEvents(
     }
 
     rawEvents.push({
+      tool_call_id: linked.id,
+      message_id: linked.messageId,
+      result_message_id: linked.result.messageId,
       session_id: sessionId,
       agent_id: agentId,
       timestamp: call.ts,
@@ -169,7 +143,7 @@ export function ingestAuditEvents(
       target,
       extra_json: JSON.stringify(resolveExtra(call.name, call.args, output)),
       flags,
-      raw_input: JSON.stringify(call.args).slice(0, 2048),
+      raw_input: JSON.stringify(linked.args === undefined ? {} : linked.args).slice(0, 2048),
       raw_output: output,
       user_context: call.user_context,
     });
@@ -177,6 +151,9 @@ export function ingestAuditEvents(
 
   // Pass 3: compute final risk scores using full session context (who made external calls)
   const events: AuditEvent[] = rawEvents.map(ev => ({
+    tool_call_id: ev.tool_call_id,
+    message_id: ev.message_id,
+    result_message_id: ev.result_message_id,
     session_id: ev.session_id,
     agent_id: ev.agent_id,
     timestamp: ev.timestamp,
@@ -190,12 +167,10 @@ export function ingestAuditEvents(
     raw_output: ev.raw_output,
   }));
 
-  if (events.length === 0) return { eventsInserted: 0, findingsInserted: 0 };
-
   const insertEvent = db.prepare(`
     INSERT OR IGNORE INTO audit_events
-      (session_id, agent_id, timestamp, event_type, tool_name, target, extra_json, risk_flags, risk_score, raw_input, raw_output)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (session_id, agent_id, timestamp, event_type, tool_name, target, extra_json, risk_flags, risk_score, raw_input, raw_output, tool_call_id, message_id, result_message_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertFinding = db.prepare(`
@@ -218,7 +193,7 @@ export function ingestAuditEvents(
       const r = insertEvent.run(
         ev.session_id, ev.agent_id, ev.timestamp, ev.event_type,
         ev.tool_name, ev.target, ev.extra_json, ev.risk_flags, ev.risk_score,
-        ev.raw_input, ev.raw_output
+        ev.raw_input, ev.raw_output, ev.tool_call_id, ev.message_id, ev.result_message_id
       );
       const eventId = r.lastInsertRowid as number;
       eventsInserted++;

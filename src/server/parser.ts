@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
 import { getClawHome, cleanSlackText } from './paths';
+import { isRuntimeUserMessage, resolveToolCallLinks } from './tool-call-links';
+import type { ResultMatch } from './tool-call-links';
 
 /** stop_reason / stopReason values that mean a session turn is fully closed.
  *  Values match the pi-ai upstream library that OpenClaw normalizes to:
@@ -53,6 +55,8 @@ export interface ContentItem {
   id?: string;
   name?: string;
   arguments?: Record<string, unknown>;
+  input?: unknown;
+  content?: unknown;
   text?: string;
   tool_use_id?: string;  // for tool_result content items
   is_error?: boolean;    // for tool_result content items
@@ -94,6 +98,9 @@ export interface ParsedToolCall {
   durationMs: number | null; // null until we can infer it
   success: number; // 0 or 1
   arguments: string | null;  // JSON-serialised tool input arguments
+  resultMessageId: string | null;
+  resultMatch: ResultMatch;
+  resultOutcome: 'success' | 'failure' | 'unknown';
 }
 
 export interface ParsedSession {
@@ -117,6 +124,7 @@ export interface ParseResult {
   messages: ParsedMessage[];
   toolCalls: ParsedToolCall[];
   sessions: ParsedSession[];
+  toolCallLinks: ReturnType<typeof resolveToolCallLinks>;
 }
 
 
@@ -179,76 +187,11 @@ export function parseSessionFile(filePath: string): ParseResult {
     }
   }
 
-  const messageRecords = records.filter(r => r.type === 'message');
+  const links = resolveToolCallLinks(records);
+  const messageRecords = links.records.filter(r => r.type === 'message' && typeof r.id === 'string' && r.id);
 
   const messages: ParsedMessage[] = [];
   const toolCalls: ParsedToolCall[] = [];
-
-  // Build a map of message index for timing inference
-  const msgTimestamps: number[] = messageRecords.map(r => {
-    return r.message?.timestamp || new Date(r.timestamp).getTime();
-  });
-
-  // ── Build toolResult lookup: toolCallId → { timestamp, durationMs, failed, aborted, dispatchTs } ──
-  // Tool results appear either as legacy `role: 'toolResult'` records (OpenClaw format)
-  // or as `role: 'user'` messages with `tool_result` content items (Anthropic-style modern format).
-  //
-  // Two important real-data findings drive how we derive status here:
-  //
-  //  1. `msg.isError` is unreliable. It's `false` for ~99.9% of records even when the tool
-  //     actually errored, failed, timed out, or had its approval denied. The authoritative
-  //     signal is `details.status`. We classify it manually.
-  //
-  //  2. `details.durationMs` is missing for ~38% of tool calls. The previous fallback
-  //     (toolResult.timestamp - assistant.message.timestamp) overestimated by 30-500x
-  //     because assistant.message.timestamp is the LLM CALL START, not the LLM finish /
-  //     dispatch time. The top-level `r.timestamp` of the assistant record is when the
-  //     response was logged (≈ dispatch time), so we capture it separately.
-  const FAILED_STATUSES = new Set(['error', 'failed', 'timeout', 'approval-unavailable']);
-  const toolResultMap = new Map<string, { timestamp: number; durationMs: number | null; failed: boolean; aborted: boolean }>();
-
-  for (const r of messageRecords) {
-    const msg = r.message;
-    if (!msg) continue;
-
-    const trTs = msg.timestamp || new Date(r.timestamp).getTime();
-
-    // Legacy format: msg.role === 'toolResult' with toolCallId
-    if (msg.role === 'toolResult' && msg.toolCallId) {
-      const detailDur = msg.details?.durationMs ?? null;
-      const status = msg.details?.status;
-      // status === 'running' means the tool was still running when aborted
-      const aborted = status === 'running';
-      // Real failure signal is status, not isError. isError is almost always false.
-      const failed = typeof status === 'string' && FAILED_STATUSES.has(status)
-        || (status === undefined && Boolean(msg.isError));
-      toolResultMap.set(msg.toolCallId, {
-        timestamp: trTs,
-        durationMs: typeof detailDur === 'number' && detailDur > 0 ? detailDur : null,
-        failed,
-        aborted,
-      });
-      continue;
-    }
-
-    // Modern format: role='user', content contains tool_result items.
-    // (Currently unused by OpenClaw — kept for forward compat with Anthropic-style logs.)
-    if (msg.role === 'user' && Array.isArray(msg.content)) {
-      const recordDur = (r.toolUseResult as Record<string, unknown>)?.durationMs;
-      const durMs = typeof recordDur === 'number' && recordDur > 0 ? recordDur : null;
-
-      for (const item of msg.content as ContentItem[]) {
-        if (item.type === 'tool_result' && item.tool_use_id) {
-          toolResultMap.set(item.tool_use_id, {
-            timestamp: trTs,
-            durationMs: durMs,
-            failed: Boolean(item.is_error),
-            aborted: false,
-          });
-        }
-      }
-    }
-  }
 
   for (let i = 0; i < messageRecords.length; i++) {
     const r = messageRecords[i];
@@ -265,25 +208,7 @@ export function parseSessionFile(filePath: string): ParseResult {
     const hasError = stopReason === 'error' ? 1 : 0;
     const errorMsg = msg.errorMessage || null;
 
-    // Detect non-real-user messages: tool results, runtime-injected context, etc.
-    // These should not be treated as "real user input" for latency profiling.
-    let isToolResult = 0;
-    if (msg.role === 'user') {
-      if ('toolUseResult' in r) {
-        isToolResult = 1;
-      } else if (Array.isArray(msg.content) && msg.content.some((c: ContentItem) => c.type === 'tool_result')) {
-        isToolResult = 1;
-      } else {
-        // OpenClaw runtime context messages (subagent completion events, system notifications)
-        // have role='user' but are auto-generated, not real user input.
-        const textContent = Array.isArray(msg.content)
-          ? msg.content.filter((c: ContentItem) => c.type === 'text').map((c: ContentItem) => c.text || '').join('')
-          : typeof msg.content === 'string' ? msg.content : '';
-        if (textContent.includes('runtime-generated, not user-authored') || textContent.includes('[Internal task completion event]')) {
-          isToolResult = 1;
-        }
-      }
-    }
+    const isToolResult = isRuntimeUserMessage(r) ? 1 : 0;
 
     const parsed: ParsedMessage = {
       id: r.id,
@@ -311,51 +236,26 @@ export function parseSessionFile(filePath: string): ParseResult {
       toolCalls: [],
     };
 
-    // Extract tool calls from content
-    const rawContent = msg.content || [];
-    const contentArr: ContentItem[] = Array.isArray(rawContent) ? rawContent : [];
-    // Top-level r.timestamp ≈ when the assistant response was logged ≈ tool dispatch start.
-    // Used as the baseline for duration fallback (NOT msg.timestamp which is LLM call start).
-    const dispatchTs = new Date(r.timestamp).getTime();
-    const msgToolCalls: ParsedToolCall[] = contentArr
-      .filter((item: ContentItem) => (item.type === 'toolCall' || item.type === 'tool_use') && item.id && item.name)
-      .map(item => {
-        // Use individual toolResult data when available (accurate per-tool timing)
-        const trData = toolResultMap.get(item.id!);
-        let durationMs: number | null = null;
-        let success = 1;
-
-        if (trData && !trData.aborted) {
-          if (trData.durationMs) {
-            // Exact runtime measurement from the tool itself
-            durationMs = trData.durationMs;
-          } else {
-            // Fallback: toolResult timestamp - dispatch time (LLM finish, not LLM start).
-            // Real-data validation: this is accurate to ~25 ms (vs 9 sec error using
-            // assistant.msg.timestamp as the baseline).
-            const raw = trData.timestamp - dispatchTs;
-            durationMs = raw > 0 ? raw : null;
-          }
-          // Real failure signal is status (captured into trData.failed), not isError.
-          success = trData.failed ? 0 : 1;
-        }
-        // Aborted tools (status='running') have no reliable duration → leave null,
-        // and mark as not-success since they didn't complete.
-        if (trData?.aborted) success = 0;
-
-        const tc: ParsedToolCall = {
-          id: item.id!,
-          messageId: r.id,
-          sessionId,
-          agentName,
-          timestamp: trData?.timestamp ?? ts,  // use toolResult timestamp if available
-          toolName: item.name!,
-          durationMs,
-          success,
-          arguments: item.arguments ? JSON.stringify(item.arguments) : null,
-        };
-        return tc;
-      });
+    const msgToolCalls: ParsedToolCall[] = (links.callsForMessage.get(r.id) ?? []).map(call => {
+      const result = call.result;
+      let durationMs: number | null = null;
+      if (result && !result.aborted) {
+        const elapsed = result.timestamp - call.dispatchTimestamp;
+        durationMs = result.durationMs ?? (Number.isFinite(elapsed) && elapsed > 0 ? elapsed : null);
+      }
+      return {
+        id: call.id, messageId: r.id, sessionId, agentName,
+        timestamp: result?.timestamp ?? ts,
+        toolName: call.name, durationMs,
+        // Preserve the legacy integer contract; resultOutcome is authoritative
+        // for consumers that need to distinguish an unknown outcome.
+        success: result && (result.failed || result.aborted) ? 0 : 1,
+        arguments: call.args === undefined ? null : JSON.stringify(call.args),
+        resultMessageId: result?.messageId ?? null,
+        resultMatch: call.match,
+        resultOutcome: !result || result.aborted ? 'unknown' : result.failed ? 'failure' : 'success',
+      };
+    });
 
     parsed.toolCalls = msgToolCalls;
     messages.push(parsed);
@@ -363,9 +263,9 @@ export function parseSessionFile(filePath: string): ParseResult {
   }
 
   // Build session summary
-  const session = buildSession(sessionId, agentName, messages, records);
+  const session = buildSession(sessionId, agentName, messages, links.records);
 
-  return { messages, toolCalls, sessions: session ? [session] : [] };
+  return { messages, toolCalls, sessions: session ? [session] : [], toolCallLinks: links };
 }
 
 function buildSession(

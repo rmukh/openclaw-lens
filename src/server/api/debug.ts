@@ -7,6 +7,7 @@ import {
   readCacheTrace,
   readCacheTraceAllStages,
 } from './cache-trace-reader';
+import type { ResultMatch } from '../tool-call-links';
 
 /**
  * Estimate token count from a string. Uses char/4 for ASCII-heavy text
@@ -205,6 +206,10 @@ export default function debugRouter(db: Database): Router {
       error_message: string | null;
     }
     interface TcRow {
+      result_message_id: string | null;
+      result_match: ResultMatch;
+      result_outcome: 'success' | 'failure' | 'unknown';
+      audit_match: 'exact' | 'unlinked' | 'ambiguous';
       id: string;
       message_id: string;
       timestamp: number;
@@ -226,58 +231,55 @@ export default function debugRouter(db: Database): Router {
       FROM messages WHERE session_id = ? ORDER BY timestamp ASC
     `).all(sid) as MsgRow[];
 
-    // Query tool_calls and audit_events separately, then merge by closest timestamp
-    // (timestamps between the two tables can differ by several seconds)
     interface TcRaw {
       id: string; message_id: string; timestamp: number; tool_name: string;
       duration_ms: number | null; success: number; arguments: string | null;
+      agent_name: string; result_message_id: string | null; result_match: ResultMatch;
+      result_outcome: 'success' | 'failure' | 'unknown';
     }
     interface AeRow {
-      tool_name: string; timestamp: number;
+      agent_id: string; tool_call_id: string; message_id: string; result_message_id: string;
       raw_input: string | null; raw_output: string | null;
       extra_json: string | null; risk_flags: string | null;
       risk_score: number | null; target: string | null; event_type: string | null;
     }
-
     const rawTcs = db.prepare(`
-      SELECT id, message_id, timestamp, tool_name, duration_ms, success, arguments
+      SELECT id, message_id, agent_name, timestamp, tool_name, duration_ms, success, arguments,
+             result_message_id, result_match, result_outcome
       FROM tool_calls WHERE session_id = ? ORDER BY timestamp ASC
     `).all(sid) as TcRaw[];
-
     const auditEvents = db.prepare(`
-      SELECT tool_name, timestamp, raw_input, raw_output, extra_json, risk_flags, risk_score, target, event_type
-      FROM audit_events WHERE session_id = ? ORDER BY timestamp ASC
+      SELECT agent_id, tool_call_id, message_id, result_message_id,
+             raw_input, raw_output, extra_json, risk_flags, risk_score, target, event_type
+      FROM audit_events WHERE session_id = ?
+        AND tool_call_id IS NOT NULL AND message_id IS NOT NULL AND result_message_id IS NOT NULL
     `).all(sid) as AeRow[];
-
-    // Build a map: for each tool_name, list of audit events sorted by timestamp
-    const aeByTool = new Map<string, AeRow[]>();
-    for (const ae of auditEvents) {
-      if (!aeByTool.has(ae.tool_name)) aeByTool.set(ae.tool_name, []);
-      aeByTool.get(ae.tool_name)!.push(ae);
+    const auditByIdentity = new Map<string, AeRow[]>();
+    const key = (agent: string, message: string, tool: string) => JSON.stringify([agent, sid, message, tool]);
+    for (const event of auditEvents) {
+      const identity = key(event.agent_id, event.message_id, event.tool_call_id);
+      const matches = auditByIdentity.get(identity) ?? [];
+      matches.push(event);
+      auditByIdentity.set(identity, matches);
     }
-
-    // Match each tool_call to the closest audit_event (same tool_name, within 30s)
-    const usedAe = new Set<AeRow>();
     const allTcs: TcRow[] = rawTcs.map(tc => {
-      const candidates = aeByTool.get(tc.tool_name) ?? [];
-      let best: AeRow | null = null;
-      let bestDiff = Infinity;
-      for (const ae of candidates) {
-        if (usedAe.has(ae)) continue;
-        const diff = Math.abs(ae.timestamp - tc.timestamp);
-        const TIMESTAMP_MATCH_THRESHOLD_MS = 30_000;
-        if (diff < bestDiff && diff < TIMESTAMP_MATCH_THRESHOLD_MS) { best = ae; bestDiff = diff; }
-      }
-      if (best) usedAe.add(best);
+      const matches = auditByIdentity.get(key(tc.agent_name, tc.message_id, tc.id)) ?? [];
+      // Require both the request identity and the exact linked result record.
+      // A stale or duplicate audit row is never silently selected.
+      const exact = tc.result_match === 'exact' && matches.length === 1
+        && matches[0].result_message_id === tc.result_message_id;
+      const event = exact ? matches[0] : null;
+      const ambiguous = matches.length > 1 || (matches.length === 1 && !exact);
       return {
         ...tc,
-        raw_input:  best?.raw_input  ?? null,
-        raw_output: best?.raw_output ?? null,
-        extra_json: best?.extra_json ?? null,
-        risk_flags: best?.risk_flags ?? null,
-        risk_score: best?.risk_score ?? null,
-        target:     best?.target     ?? null,
-        event_type: best?.event_type ?? null,
+        audit_match: exact ? 'exact' : ambiguous ? 'ambiguous' : 'unlinked',
+        raw_input: event?.raw_input ?? null,
+        raw_output: event?.raw_output ?? null,
+        extra_json: event?.extra_json ?? null,
+        risk_flags: event?.risk_flags ?? null,
+        risk_score: event?.risk_score ?? null,
+        target: event?.target ?? null,
+        event_type: event?.event_type ?? null,
       };
     });
 
@@ -374,11 +376,15 @@ export default function debugRouter(db: Database): Router {
 
         return {
           id: tc.id,
+          message_id: tc.message_id,
+          result_message_id: tc.result_message_id,
+          result_match: tc.result_match,
+          audit_match: tc.audit_match,
           tool_name: tc.tool_name,
           start_ms: cMsgStart + compressedOffset,      // compressed coordinates
           wall_start_ms: tc.timestamp - sessionStart,
           duration_ms: Math.max(durMs, 100),             // min 100 ms so bar is visible
-          success: Boolean(tc.success),
+          success: tc.result_match === 'exact' && tc.result_outcome !== 'unknown' ? Boolean(tc.success) : null,
           lane,                                           // for vertical stacking in Gantt
           total_lanes: totalLanes,
           arguments:  tc.arguments  ?? null,
