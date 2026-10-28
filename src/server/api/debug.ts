@@ -7,6 +7,8 @@ import {
   readCacheTrace,
   readCacheTraceAllStages,
 } from './cache-trace-reader';
+import type { ResultMatch } from '../tool-call-links';
+import { callDetailsRouter } from './call-details';
 
 /**
  * Estimate token count from a string. Uses char/4 for ASCII-heavy text
@@ -20,8 +22,9 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / ratio);
 }
 
-export default function debugRouter(db: Database): Router {
+export default function debugRouter(db: Database, clawHome?: string): Router {
   const r = Router();
+  r.use(callDetailsRouter(db, clawHome));
 
   // ── GET /api/debug/status ────────────────────────────────────────────────────
   r.get('/status', (_req, res) => {
@@ -194,6 +197,7 @@ export default function debugRouter(db: Database): Router {
 
     interface MsgRow {
       id: string;
+      agent_name: string;
       timestamp: number;
       role: string;
       input_tokens: number;
@@ -205,6 +209,11 @@ export default function debugRouter(db: Database): Router {
       error_message: string | null;
     }
     interface TcRow {
+      agent_name: string;
+      result_message_id: string | null;
+      result_match: ResultMatch;
+      result_outcome: 'success' | 'failure' | 'unknown';
+      audit_match: 'exact' | 'unlinked' | 'ambiguous';
       id: string;
       message_id: string;
       timestamp: number;
@@ -222,62 +231,59 @@ export default function debugRouter(db: Database): Router {
     }
 
     const allMsgs = db.prepare(`
-      SELECT id, timestamp, role, input_tokens, output_tokens, cache_read, cache_write, cost_total, stop_reason, error_message
+      SELECT id, agent_name, timestamp, role, input_tokens, output_tokens, cache_read, cache_write, cost_total, stop_reason, error_message
       FROM messages WHERE session_id = ? ORDER BY timestamp ASC
     `).all(sid) as MsgRow[];
 
-    // Query tool_calls and audit_events separately, then merge by closest timestamp
-    // (timestamps between the two tables can differ by several seconds)
     interface TcRaw {
       id: string; message_id: string; timestamp: number; tool_name: string;
       duration_ms: number | null; success: number; arguments: string | null;
+      agent_name: string; result_message_id: string | null; result_match: ResultMatch;
+      result_outcome: 'success' | 'failure' | 'unknown';
     }
     interface AeRow {
-      tool_name: string; timestamp: number;
+      agent_id: string; tool_call_id: string; message_id: string; result_message_id: string;
       raw_input: string | null; raw_output: string | null;
       extra_json: string | null; risk_flags: string | null;
       risk_score: number | null; target: string | null; event_type: string | null;
     }
-
     const rawTcs = db.prepare(`
-      SELECT id, message_id, timestamp, tool_name, duration_ms, success, arguments
+      SELECT id, message_id, agent_name, timestamp, tool_name, duration_ms, success, arguments,
+             result_message_id, result_match, result_outcome
       FROM tool_calls WHERE session_id = ? ORDER BY timestamp ASC
     `).all(sid) as TcRaw[];
-
     const auditEvents = db.prepare(`
-      SELECT tool_name, timestamp, raw_input, raw_output, extra_json, risk_flags, risk_score, target, event_type
-      FROM audit_events WHERE session_id = ? ORDER BY timestamp ASC
+      SELECT agent_id, tool_call_id, message_id, result_message_id,
+             raw_input, raw_output, extra_json, risk_flags, risk_score, target, event_type
+      FROM audit_events WHERE session_id = ?
+        AND tool_call_id IS NOT NULL AND message_id IS NOT NULL AND result_message_id IS NOT NULL
     `).all(sid) as AeRow[];
-
-    // Build a map: for each tool_name, list of audit events sorted by timestamp
-    const aeByTool = new Map<string, AeRow[]>();
-    for (const ae of auditEvents) {
-      if (!aeByTool.has(ae.tool_name)) aeByTool.set(ae.tool_name, []);
-      aeByTool.get(ae.tool_name)!.push(ae);
+    const auditByIdentity = new Map<string, AeRow[]>();
+    const key = (agent: string, message: string, tool: string) => JSON.stringify([agent, sid, message, tool]);
+    for (const event of auditEvents) {
+      const identity = key(event.agent_id, event.message_id, event.tool_call_id);
+      const matches = auditByIdentity.get(identity) ?? [];
+      matches.push(event);
+      auditByIdentity.set(identity, matches);
     }
-
-    // Match each tool_call to the closest audit_event (same tool_name, within 30s)
-    const usedAe = new Set<AeRow>();
     const allTcs: TcRow[] = rawTcs.map(tc => {
-      const candidates = aeByTool.get(tc.tool_name) ?? [];
-      let best: AeRow | null = null;
-      let bestDiff = Infinity;
-      for (const ae of candidates) {
-        if (usedAe.has(ae)) continue;
-        const diff = Math.abs(ae.timestamp - tc.timestamp);
-        const TIMESTAMP_MATCH_THRESHOLD_MS = 30_000;
-        if (diff < bestDiff && diff < TIMESTAMP_MATCH_THRESHOLD_MS) { best = ae; bestDiff = diff; }
-      }
-      if (best) usedAe.add(best);
+      const matches = auditByIdentity.get(key(tc.agent_name, tc.message_id, tc.id)) ?? [];
+      // Require both the request identity and the exact linked result record.
+      // A stale or duplicate audit row is never silently selected.
+      const exact = tc.result_match === 'exact' && matches.length === 1
+        && matches[0].result_message_id === tc.result_message_id;
+      const event = exact ? matches[0] : null;
+      const ambiguous = matches.length > 1 || (matches.length === 1 && !exact);
       return {
         ...tc,
-        raw_input:  best?.raw_input  ?? null,
-        raw_output: best?.raw_output ?? null,
-        extra_json: best?.extra_json ?? null,
-        risk_flags: best?.risk_flags ?? null,
-        risk_score: best?.risk_score ?? null,
-        target:     best?.target     ?? null,
-        event_type: best?.event_type ?? null,
+        audit_match: exact ? 'exact' : ambiguous ? 'ambiguous' : 'unlinked',
+        raw_input: event?.raw_input ?? null,
+        raw_output: event?.raw_output ?? null,
+        extra_json: event?.extra_json ?? null,
+        risk_flags: event?.risk_flags ?? null,
+        risk_score: event?.risk_score ?? null,
+        target: event?.target ?? null,
+        event_type: event?.event_type ?? null,
       };
     });
 
@@ -288,6 +294,11 @@ export default function debugRouter(db: Database): Router {
     }
 
     const sessionStart = allMsgs[0].timestamp;
+    // The parser stores result/completion time in tool_calls.timestamp.
+    // Recover execution intervals before assigning lanes or compressing gaps.
+    const toolStart = (tc: TcRow) => Math.max(sessionStart, tc.timestamp - Math.max(0, tc.duration_ms ?? 0));
+    const activeTools = allTcs.filter(tc => (tc.duration_ms ?? 0) > 0)
+      .map(tc => ({ start: toolStart(tc), end: tc.timestamp })).sort((a, b) => a.start - b.start);
 
     // ── Build idle-gap compression map ────────────────────────────────────────
     // For each wall-clock timestamp, cTs() returns the compressed equivalent.
@@ -296,7 +307,7 @@ export default function debugRouter(db: Database): Router {
     const allTimestamps = [
       ...allMsgs.map(m => m.timestamp),
       ...allTcs.map(tc => tc.timestamp),
-      ...allTcs.filter(tc => tc.duration_ms).map(tc => tc.timestamp + (tc.duration_ms ?? 0)),
+      ...allTcs.map(toolStart),
     ].sort((a, b) => a - b);
     // Deduplicate nearby timestamps (within 10ms)
     const dedupedTs: number[] = [];
@@ -307,9 +318,12 @@ export default function debugRouter(db: Database): Router {
     }
     interface GapInfo { after_ts: number; savings_ms: number }
     const gaps: GapInfo[] = [];
+    let activeIndex = 0;
     for (let i = 0; i < dedupedTs.length - 1; i++) {
+      while (activeIndex < activeTools.length && activeTools[activeIndex].end <= dedupedTs[i]) activeIndex++;
+      const executing = activeIndex < activeTools.length && activeTools[activeIndex].start < dedupedTs[i + 1];
       const gap = dedupedTs[i + 1] - dedupedTs[i];
-      if (gap > IDLE_THRESHOLD_MS) {
+      if (gap > IDLE_THRESHOLD_MS && !executing) {
         gaps.push({ after_ts: dedupedTs[i], savings_ms: gap - IDLE_DISPLAY_MS });
       }
     }
@@ -339,20 +353,18 @@ export default function debugRouter(db: Database): Router {
       const tools = tcByMsg.get(msg.id) ?? [];
 
       // ── Per-tool duration with parallel detection ──
-      // Each tool now has its own wall timestamp and individual duration_ms from the parser.
-      // Detect parallel: if tool wall timestamps are within 200ms of each other, they ran in parallel.
+      // Use measured execution intervals, including tools with different finish times.
       const cMsgStart = cTs(msg.timestamp); // compressed start of tool block
 
       // Sort tools by wall timestamp to detect parallelism
-      const sortedTools = [...tools].sort((a, b) => a.timestamp - b.timestamp);
+      const sortedTools = [...tools].sort((a, b) => toolStart(a) - toolStart(b));
 
       // Group into parallel "lanes": tools that overlap in time run in parallel
       interface ToolLane { tc: TcRow; wallStart: number; wallEnd: number; lane: number }
       const lanes: ToolLane[] = [];
       for (const tc of sortedTools) {
-        const dur = Math.min(tc.duration_ms ?? 0, MAX_TOOL_DUR_MS);
-        const wallStart = tc.timestamp;
-        const wallEnd = wallStart + dur;
+        const wallStart = toolStart(tc);
+        const wallEnd = tc.timestamp;
 
         // Find the first lane where this tool doesn't overlap
         let lane = 0;
@@ -362,23 +374,23 @@ export default function debugRouter(db: Database): Router {
         lanes.push({ tc, wallStart, wallEnd, lane });
       }
 
-      // Compute compressed start for each tool relative to the tool block start
-      const toolBlockWallStart = sortedTools.length > 0 ? sortedTools[0].timestamp : msg.timestamp;
       const totalLanes = lanes.length > 0 ? Math.max(...lanes.map(l => l.lane)) + 1 : 0;
 
       const toolSlices = lanes.map(({ tc, wallStart, lane }) => {
         const durMs = Math.min(tc.duration_ms ?? 0, MAX_TOOL_DUR_MS);
-        const offsetFromBlockStart = Math.max(0, wallStart - toolBlockWallStart);
-        // Compress the offset (cap at idle threshold)
-        const compressedOffset = Math.min(offsetFromBlockStart, IDLE_THRESHOLD_MS);
 
         return {
           id: tc.id,
+          agent_name: tc.agent_name,
+          message_id: tc.message_id,
+          result_message_id: tc.result_message_id,
+          result_match: tc.result_match,
+          audit_match: tc.audit_match,
           tool_name: tc.tool_name,
-          start_ms: cMsgStart + compressedOffset,      // compressed coordinates
-          wall_start_ms: tc.timestamp - sessionStart,
+          start_ms: cTs(wallStart),
+          wall_start_ms: wallStart - sessionStart,
           duration_ms: Math.max(durMs, 100),             // min 100 ms so bar is visible
-          success: Boolean(tc.success),
+          success: tc.result_match === 'exact' && tc.result_outcome !== 'unknown' ? Boolean(tc.success) : null,
           lane,                                           // for vertical stacking in Gantt
           total_lanes: totalLanes,
           arguments:  tc.arguments  ?? null,
@@ -414,6 +426,7 @@ export default function debugRouter(db: Database): Router {
 
       return {
         seq: i + 1,
+        agent_name: msg.agent_name,
         message_id:    msg.id,        // assistant message ID — for content lookup
         user_message_id: userMsg?.id ?? null,  // preceding user message ID
         start_ms:      cStart,       // compressed — used by Gantt

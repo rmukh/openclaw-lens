@@ -1,10 +1,12 @@
 import { createToolStyles, LLM_COLOR, ERROR_COLOR } from '../lib/tool-colors';
 import type { ToolStyle } from '../lib/tool-colors';
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { lazy, Suspense, useState, useRef, useEffect, useMemo } from 'react';
+import type { CallSelection } from '../components/CallInspector';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import { useFetch, fmtMs, fmtTokens, fmtCost } from '../hooks';
 import { PageHeader, Loading, KpiStrip, Kpi, InfoTooltip } from '../components/ui';
+const CallInspector = lazy(() => import('../components/CallInspector'));
 
 /* ── types ── */
 interface SessionRow {
@@ -18,11 +20,16 @@ interface SessionRow {
 }
 interface ToolSlice {
   id: string;
+  agent_name: string;
   tool_name: string;
   start_ms: number;       // compressed — for Gantt positioning
   wall_start_ms: number;  // wall clock — for table display
   duration_ms: number;
-  success: boolean;
+  success: boolean | null;
+  message_id: string;
+  result_message_id: string | null;
+  result_match: 'exact' | 'missing' | 'ambiguous';
+  audit_match: 'exact' | 'unlinked' | 'ambiguous';
   lane: number;            // vertical lane index (0-based) for parallel tools
   total_lanes: number;     // how many parallel lanes in this turn
   arguments: string | null;
@@ -36,6 +43,7 @@ interface ToolSlice {
 }
 interface TurnSlice {
   seq: number;
+  agent_name: string;
   message_id: string;           // assistant message ID — for content lookup
   user_message_id: string | null; // preceding user message ID
   start_ms: number;       // compressed — for Gantt
@@ -88,8 +96,8 @@ function stopMeta(raw: string | null): StopMeta {
   }
 }
 function StopPill({ reason }: { reason: string | null }) {
-  if (!reason) return null;
   const { t } = useTranslation();
+  if (!reason) return null;
   const { label, fg, bg } = stopMeta(reason);
   const displayLabel = t('sessionTimeline.stopLabel' + reason.charAt(0).toUpperCase() + reason.slice(1), { defaultValue: label });
   return (
@@ -232,9 +240,10 @@ interface TurnRowProps {
   isHighlighted: boolean;
   hideUserPrompt?: boolean;
   onToggle: () => void;
+  onInspect: (selection: CallSelection) => void;
 }
 
-function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighlighted, hideUserPrompt, onToggle, toolStyles }: TurnRowProps) {
+function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighlighted, hideUserPrompt, onToggle, onInspect, toolStyles }: TurnRowProps) {
   const { t } = useTranslation();
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -313,6 +322,9 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
           {/* LLM segment */}
           {turn.llm_ms > 0 && (
             <div
+              role="button" tabIndex={0} aria-label={t('callInspector.inspectLlm')}
+              onClick={event => { event.stopPropagation(); onInspect({ session: sessionId, agent: turn.agent_name, message: turn.message_id, name: 'LLM' }); }}
+              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onInspect({ session: sessionId, agent: turn.agent_name, message: turn.message_id, name: 'LLM' }); } }}
               title={`LLM: ${fmtMs(turn.llm_ms)} · ${fmtTokens(turn.input_tokens)} in`}
               style={{
                 position: 'absolute',
@@ -332,7 +344,10 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
           {turn.tool_calls.map(tc => (
             <div
               key={tc.id}
-              title={`${tc.tool_name}: ${fmtMs(tc.duration_ms)} · ${tc.success ? '✓' : '✗'}`}
+              role="button" tabIndex={0} aria-label={t('callInspector.inspectTool', { name: tc.tool_name })}
+              onClick={event => { event.stopPropagation(); onInspect({ session: sessionId, agent: tc.agent_name, message: tc.message_id, tool: tc.id, name: tc.tool_name }); }}
+              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onInspect({ session: sessionId, agent: tc.agent_name, message: tc.message_id, tool: tc.id, name: tc.tool_name }); } }}
+              title={`${tc.tool_name}: ${tc.success === null ? t('sessionTimeline.outcomeUnknown') : fmtMs(tc.duration_ms)} · ${tc.success === null ? '—' : tc.success ? '✓' : '✗'}`}
               style={{
                 position: 'absolute',
                 left: pct(tc.start_ms, duration),
@@ -343,7 +358,7 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                 ...toolStyles.get(tc.tool_name),
                 borderRadius: 3,
                 zIndex: 2,
-                boxShadow: !tc.success ? `0 0 0 2px ${ERROR_COLOR}` : 'none',
+                boxShadow: tc.success === false ? `0 0 0 2px ${ERROR_COLOR}` : 'none',
               }}
             />
           ))}
@@ -373,6 +388,10 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
         }}>
           {/* LLM summary row */}
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: turn.tool_calls.length > 0 ? 10 : 0 }}>
+            <button onClick={() => onInspect({ session: sessionId, agent: turn.agent_name, message: turn.message_id, name: 'LLM' })}
+              style={{ fontSize: 11, color: 'var(--C-blue)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', cursor: 'pointer' }}>
+              {t('callInspector.inspectLlm')}
+            </button>
             <span style={{ fontSize: 11, color: 'var(--muted)' }}>
               {t('sessionTimeline.start')}: <strong style={{ color: 'var(--text)', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-m)' }}>+{fmtMs(turn.wall_start_ms)}</strong>
               <span style={{ color: 'var(--muted)', marginLeft: 4, fontSize: 10 }}>({fmtActiveTime(sessionStart + turn.wall_start_ms)})</span>
@@ -499,10 +518,10 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
           {turn.tool_calls.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {turn.tool_calls.map((tc, idx) => (
-                <div key={tc.id} style={{
+                <div key={tc.id} data-tool-call-id={tc.id} data-message-id={tc.message_id} data-result-match={tc.result_match} data-audit-match={tc.audit_match} style={{
                   background: 'rgba(0,0,0,0.22)',
-                  border: `1px solid ${tc.success ? 'rgba(255,255,255,0.07)' : 'rgba(239,68,68,0.35)'}`,
-                  borderLeft: `3px solid ${tc.success ? toolStyles.get(tc.tool_name)?.backgroundColor : ERROR_COLOR}`,
+                  border: `1px solid ${tc.success === false ? 'rgba(239,68,68,0.35)' : 'rgba(255,255,255,0.07)'}`,
+                  borderLeft: `3px solid ${tc.success === false ? ERROR_COLOR : toolStyles.get(tc.tool_name)?.backgroundColor}`,
                   borderRadius: 4,
                   padding: '8px 10px',
                 }}>
@@ -516,13 +535,28 @@ function TurnRow({ turn, duration, sessionId, sessionStart, isExpanded, isHighli
                         {tc.target}
                       </span>
                     )}
-                    <span style={{ fontSize: 10, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtMs(tc.duration_ms)}</span>
-                    <span style={{ fontSize: 10, color: tc.success ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                      {tc.success ? t('sessionTimeline.ok') : t('sessionTimeline.err')}
+                    <span style={{ fontSize: 10, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{tc.success === null ? '—' : fmtMs(tc.duration_ms)}</span>
+                    <span style={{ fontSize: 10, color: tc.success === null ? 'var(--muted)' : tc.success ? '#4ade80' : '#f87171', fontWeight: 600 }}>
+                      {tc.success === null ? t('sessionTimeline.outcomeUnknown') : tc.success ? t('sessionTimeline.ok') : t('sessionTimeline.err')}
                     </span>
                     <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginLeft: 'auto' }}>#{idx + 1}</span>
+                    <button onClick={() => onInspect({ session: sessionId, agent: tc.agent_name, message: tc.message_id, tool: tc.id, name: tc.tool_name })}
+                      aria-label={t('callInspector.inspectTool', { name: tc.tool_name })}
+                      style={{ fontSize: 10, color: 'var(--C-blue)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', cursor: 'pointer' }}>
+                      {t('callInspector.inspect')}
+                    </button>
                   </div>
                   {/* Natural-language summary — only for known tools */}
+                  {tc.result_match !== 'exact' && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)' }}>
+                      {t(tc.result_match === 'ambiguous' ? 'sessionTimeline.resultAmbiguous' : 'sessionTimeline.resultMissing')}
+                    </div>
+                  )}
+                  {tc.audit_match !== 'exact' && (
+                    <div title={t('sessionTimeline.auditUnlinkedHelp')} style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)' }}>
+                      {t(tc.audit_match === 'ambiguous' ? 'sessionTimeline.auditAmbiguous' : 'sessionTimeline.auditUnlinked')}
+                    </div>
+                  )}
                   {toolSummary(tc.tool_name, tc.raw_input, t) && (
                     <div style={{
                       fontSize: 11, color: 'var(--muted)', marginTop: 4,
@@ -634,7 +668,6 @@ function JsonView({ raw, maxHeight = 180 }: { raw: string; maxHeight?: number })
         maxHeight,
         overflowY: 'auto',
       }}
-      // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: highlighted }}
     />
   );
@@ -948,6 +981,7 @@ export default function SessionTimeline() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: sessionsData } = useFetch<SessionRow[]>('/api/sessions?limit=50');
   const [selectedSession, setSelectedSession] = useState(() => searchParams.get('session') ?? '');
+  const [inspectedCall, setInspectedCall] = useState<CallSelection | null>(null);
   const [expandedTurn, setExpandedTurn] = useState<number | null>(null);
   const [highlightedTurn, setHighlightedTurn] = useState<number | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -1030,7 +1064,7 @@ export default function SessionTimeline() {
           <SessionPicker
             sessions={sessions}
             value={selectedSession}
-            onChange={id => { setSelectedSession(id); setExpandedTurn(null); }}
+            onChange={id => { setSelectedSession(id); setExpandedTurn(null); setInspectedCall(null); }}
           />
         </div>
 
@@ -1227,6 +1261,7 @@ export default function SessionTimeline() {
                                 isHighlighted={highlightedTurn === turn.seq}
                                 hideUserPrompt={turnIdx === 0}
                                 onToggle={() => setExpandedTurn(prev => prev === turn.seq ? null : turn.seq)}
+                                onInspect={setInspectedCall}
                               />
                             ))}
                           </div>
@@ -1249,6 +1284,9 @@ export default function SessionTimeline() {
         )}
 
       </div>{/* end outer wrapper */}
+      {inspectedCall && inspectedCall.session === selectedSession && <Suspense fallback={null}>
+        <CallInspector key={JSON.stringify(inspectedCall)} selection={inspectedCall} onClose={() => setInspectedCall(null)} />
+      </Suspense>}
     </div>
   );
 }

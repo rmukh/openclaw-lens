@@ -9,6 +9,7 @@ import { createSessionIdentityResolver } from '../session-identity';
 import type { SessionIdentitySource } from '../session-identity';
 import { sessionActivity } from '../session-activity';
 import type { ActivityMessage } from '../session-activity';
+import { toolResultFailed } from '../tool-call-links';
 
 export function sessionsRouter(db: Database.Database, metadataHome?: string): Router {
   const r = Router();
@@ -286,14 +287,7 @@ export function sessionsRouter(db: Database.Database, metadataHome?: string): Ro
               ? (msg.content as ContentBlock[]).filter(b => b.type === 'text').map(b => (b.text as string) ?? '').filter(Boolean).join('\n')
               : typeof msg.content === 'string' ? msg.content as string : null;
             const rawResult = aggregated ?? contentText ?? null;
-            // Real failure signal lives in details.status — msg.isError is almost
-            // always false even for errored/failed/timed-out tools. Keep isError as
-            // a last-resort fallback when details.status is missing.
-            const status = details?.status;
-            const FAILED_STATUSES_TR = new Set(['error', 'failed', 'timeout', 'approval-unavailable']);
-            const isError = msg.isError as boolean | undefined;
-            const toolFailed = typeof status === 'string' && FAILED_STATUSES_TR.has(status)
-              || (status === undefined && Boolean(isError));
+            const toolFailed = toolResultFailed({ details, isError: msg.isError });
             if (toolCallId) {
               const tool = lastTurn.tools.find(t => t.id === toolCallId);
               if (tool) {

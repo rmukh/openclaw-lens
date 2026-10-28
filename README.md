@@ -117,6 +117,32 @@ In Sessions, choose the sort field in the dropdown and click the adjacent arrow
 button to switch between ↑ ascending and ↓ descending. Direction applies to every
 field. Last active is the default and includes the former Newest sort behavior.
 
+The execution Gantt links tool results and audit details by their recorded IDs,
+including the agent, session, originating assistant message, and tool call.
+Repeated call IDs are resolved through the transcript's parent-message links;
+timestamps and tool names are never used to guess a match. Missing or ambiguous
+results show an unknown outcome, and unlinked audit details remain hidden.
+Existing audit records and dismissed findings are preserved during the schema
+upgrade. Older audit records without IDs remain unlinked until their source logs
+are normally re-ingested.
+
+Click a tool bar, an LLM segment, or an **Inspect** button to open details for that
+call in a side panel. The Gantt stays compact until you choose a call. Tool details
+include the original arguments, complete recorded result, requesting LLM response,
+and raw records, including custom tools outside the audit tool list. Switch between
+**Readable**, **Tree**, and **Raw** views to fold nested objects and arrays, read
+multiline text, optionally expand JSON inside text, or copy the loaded value.
+
+**Input / context** shows captured model input only when unique tool IDs and
+matching trace context identify the step reliably. Otherwise it shows conversation
+history reconstructed through parent IDs. Any `runContext` section is shared
+run-level context, not a precise request for that step. Provider processing can
+change the final network request; LLM calls made inside a script need their own
+logging. Missing, conflicting, or removed source records are shown explicitly.
+Details load on demand, with progressive previews up to 2,097,152 characters per
+section and a 32 MiB source-file limit. Audit previews keep their existing limits.
+Demo mode includes nested JSON, multiline output, and synthetic context traces.
+
 The activity badge describes the latest recorded turn. A final `stop`, `error`,
 `aborted`, or `length` response becomes **Idle** immediately after ingestion.
 Recent user messages awaiting a reply and unfinished tool turns show **In progress**

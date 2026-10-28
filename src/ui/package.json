@@ -12,6 +12,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@types/diff": "^7.0.2",
+    "@uiw/react-json-view": "2.0.0-alpha.44",
     "date-fns": "^4.1.0",
     "diff": "^8.0.4",
     "geist": "^1.7.0",

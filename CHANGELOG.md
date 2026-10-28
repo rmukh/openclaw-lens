@@ -4,6 +4,7 @@
 
 ### Added
 
+- Inspect individual Execution Gantt tool/LLM calls in an on-demand side panel, with foldable Readable/Tree views, original Raw records, JSON-in-text expansion, copy/wrap controls, and progressive payload previews. Read full recorded results for custom tools independently of audit previews; distinguish captured step input from reconstructed conversation and shared run context. Include English/Chinese labels and richer demo payloads/traces.
 - Separate recorded LLM-response and tool-call counts in Token Usage's Breakdown and Token Usage by Agent sections, with per-tool details, agent/model/cron/manual counts, and counts for expanded sessions. Each section follows its own selected dates; counts do not estimate provider billing.
 - Give Token Usage by Agent the same independent period picker as Breakdown, including Monday-based This Week, day/week navigation, and inclusive custom ranges. Expanded sessions follow the selected bounds, and empty ranges retain usable controls.
 - “This Week (Mon–today)” and custom calendar ranges in Token Usage's Breakdown section. All agent/model/cron breakdowns use the selected interval, with timezone-aware boundaries and inclusive custom end dates.
@@ -19,6 +20,12 @@
 
 ### Fixed
 
+- Place Gantt tool bars using execution start times rather than completion timestamps, correctly detect parallel tools with different finish times, and preserve measured tool activity when compressing idle gaps.
+- Treat transcript IDs reused across record types and requests repeated inside trace snapshots as ambiguous, rather than claiming a unique response or captured input.
+- Reject captured-input matches when tool arguments/names differ, completion snapshots conflict, or stream steps reuse sequence numbers. Preserve recorded-context fallback instead of choosing inconsistent trace evidence.
+- Recognize nonzero tool exit codes and explicit error flags even when OpenClaw reports the execution status as completed. Verified with real Python skill runs, including argument-validation failure and recovery.
+- Keep transcript and audit ingestion in one transaction using a single file snapshot, and retry files after an audit failure. Handle conflicting result revisions, malformed IDs/content, and corrected tool names without stale pairing; exclude runtime-generated messages from user-prompt audit context and cache ancestor context for long runs.
+- Pair execution Gantt tool results and audit details by agent/session/message/call IDs instead of tool-name/timestamp proximity. Share legacy/modern transcript matching between parsers, resolve reused IDs through parent-message ancestry, and show missing or ambiguous outcomes as Unknown. The additive migration preserves old audit records and dismissed findings; legacy audit details remain unlinked until normal re-ingestion.
 - Avoid aborting live WebSocket handshakes during React development checks or page navigation, preventing repeated Windows `ECONNABORTED` proxy errors while keeping reconnects and live updates working.
 - Keep the development dashboard on port 6060, wait for API readiness before starting Vite, and stop both development processes when either exits. Use the backend's IPv4 address for HTTP/WebSocket proxying.
 - Locate OpenClaw through Windows npm shims as well as Unix executables, without printing a missing `which` error on Windows.

@@ -65,7 +65,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
   app.use('/api/stats', statsRouter(db));
   app.use('/api/cron', cronRouter(db));
   app.use('/api/audit', auditRouter(db));
-  app.use('/api/debug', debugRouter(db));
+  app.use('/api/debug', debugRouter(db, opts.clawHome));
   app.use('/api/tokens', tokensRouter(db));
   app.use('/api/profiler', profilerRouter(db));
 
